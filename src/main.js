@@ -8,6 +8,7 @@ import { createLogsPanel, renderInitialLogs } from './ui/Logs.js';
 import { createDebugPanel } from './ui/Debug.js';
 import { createDropzone } from './ui/Dropzone.js';
 import { createFileList } from './ui/FileList.js';
+import { createMemoryBank } from './ui/MemoryBank.js';
 
 // Initialisation
 document.addEventListener('DOMContentLoaded', () => {
@@ -71,6 +72,10 @@ function createMainUI(container) {
   // Panel de debug
   const debugPanel = createDebugPanel();
   sidebar.appendChild(debugPanel);
+
+  // Memory Bank
+  const memoryBank = createMemoryBank();
+  sidebar.appendChild(memoryBank);
   
   // Assembler la grille
   mainGrid.appendChild(mainColumn);

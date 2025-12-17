@@ -2,10 +2,11 @@
  * Composant UI : Liste des fichiers uploadés
  */
 
-import { state, removeDocument, updateDocumentStatus, updateDocumentExtraction } from '../state/state.js';
+import { state, removeDocument, updateDocumentStatus, updateDocumentExtraction, addChunks } from '../state/state.js';
 import { formatFileSize } from '../utils/fileUtils.js';
 import { showPDFViewer } from './PDFViewer.js';
 import { extractTextFromPDF } from '../rag/pdfExtract.js';
+import { createChunksForDocument } from '../rag/chunker.js';
 
 /**
  * Crée le composant de liste des fichiers
@@ -186,8 +187,12 @@ function createFileCard(doc) {
     const pagesIcon = document.createElement('span');
     pagesIcon.textContent = '📊';
     
+    // Compter les chunks pour ce document
+    const docChunks = state.chunks.filter(c => c.docId === doc.id);
+    const chunksInfo = docChunks.length > 0 ? ` • ${docChunks.length} chunks` : '';
+    
     const statsText = document.createElement('span');
-    statsText.textContent = `${doc.pageCount} pages • ${doc.charCount.toLocaleString()} caractères`;
+    statsText.textContent = `${doc.pageCount} pages • ${doc.charCount.toLocaleString()} caractères${chunksInfo}`;
     
     statsContainer.appendChild(pagesIcon);
     statsContainer.appendChild(statsText);
@@ -280,6 +285,18 @@ async function handleExtraction(docId) {
 
     // Mettre à jour le document avec les données d'extraction
     updateDocumentExtraction(docId, extractionData);
+
+    // Créer les chunks (500 chars, overlap 100)
+    const chunks = createChunksForDocument(
+      extractionData.text,
+      doc.filename,
+      docId,
+      500,  // chunkSize
+      100   // overlap
+    );
+
+    // Ajouter les chunks au state
+    addChunks(chunks);
 
     // Re-rendre la liste
     renderFileList();

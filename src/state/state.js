@@ -168,6 +168,9 @@ export function removeDocument(id) {
 
   const doc = state.docs[index];
   
+  // Supprimer les chunks associés
+  removeChunksByDocId(id);
+  
   // Suppression du state
   state.docs.splice(index, 1);
 
@@ -256,6 +259,87 @@ export function updateDocumentExtraction(id, extractionData) {
   });
 
   return true;
+}
+
+/**
+ * Ajoute des chunks au state
+ * @param {Array} chunks - Liste des chunks à ajouter
+ * @returns {boolean} - true si ajouté avec succès
+ */
+export function addChunks(chunks) {
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    return false;
+  }
+
+  state.chunks.push(...chunks);
+
+  // Émission d'événement pour notifier l'UI
+  window.dispatchEvent(new CustomEvent('state:chunksAdded', { 
+    detail: { count: chunks.length, source: chunks[0]?.source } 
+  }));
+
+  // Log
+  addLog('success', `${chunks.length} chunks créés pour ${chunks[0]?.source}`, { 
+    count: chunks.length,
+    source: chunks[0]?.source 
+  });
+
+  return true;
+}
+
+/**
+ * Supprime tous les chunks d'un document
+ * @param {string} docId - L'ID du document
+ * @returns {number} - Nombre de chunks supprimés
+ */
+export function removeChunksByDocId(docId) {
+  const initialLength = state.chunks.length;
+  state.chunks = state.chunks.filter(chunk => chunk.docId !== docId);
+
+  const removedCount = initialLength - state.chunks.length;
+
+  if (removedCount > 0) {
+    // Émission d'événement pour notifier l'UI
+    window.dispatchEvent(new CustomEvent('state:chunksRemoved', { 
+      detail: { docId, count: removedCount } 
+    }));
+
+    // Log
+    addLog('info', `${removedCount} chunks supprimés pour document ${docId}`, { docId, count: removedCount });
+  }
+
+  return removedCount;
+}
+
+/**
+ * Obtient les chunks d'un document
+ * @param {string} docId - L'ID du document
+ * @returns {Array} - Liste des chunks du document
+ */
+export function getChunksByDocId(docId) {
+  return state.chunks.filter(chunk => chunk.docId === docId);
+}
+
+/**
+ * Obtient les statistiques des chunks
+ * @returns {object} - Statistiques (total, par source, etc.)
+ */
+export function getChunksStats() {
+  const stats = {
+    total: state.chunks.length,
+    bySource: {},
+    totalChars: 0
+  };
+
+  state.chunks.forEach(chunk => {
+    if (!stats.bySource[chunk.source]) {
+      stats.bySource[chunk.source] = 0;
+    }
+    stats.bySource[chunk.source]++;
+    stats.totalChars += chunk.charCount || chunk.text.length;
+  });
+
+  return stats;
 }
 
 // Initialisation

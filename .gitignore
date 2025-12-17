@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+.vite/
+
+# Documentation interne (ne pas publier)
+CHECKLIST.md
+PROJECT_REQUIREMENTS.md
+PROJECT.md
+Prompt.md
+docs/
+

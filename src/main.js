@@ -8,7 +8,7 @@ import { createLogsPanel, renderInitialLogs } from './ui/Logs.js';
 import { createDebugPanel } from './ui/Debug.js';
 import { createDropzone } from './ui/Dropzone.js';
 import { createFileList } from './ui/FileList.js';
-import { createMemoryBank } from './ui/MemoryBank.js';
+import { createIngestionPanel } from './ui/IngestionPanel.js';
 
 // Initialisation
 document.addEventListener('DOMContentLoaded', () => {
@@ -30,95 +30,131 @@ document.addEventListener('DOMContentLoaded', () => {
  * Crée la structure principale de l'interface
  */
 function createMainUI(container) {
-  // Header
+  container.className = 'min-h-screen bg-gray-100 flex flex-col';
+  
+  // Header compact
   const header = document.createElement('header');
-  header.className = 'bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 mb-6 rounded-lg shadow-lg';
+  header.className = 'bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-4 shadow-lg';
   header.innerHTML = `
-    <h1 class="text-3xl font-bold mb-2">📚 Local LLM Multi-Agent Literature Reviewer</h1>
-    <p class="text-blue-100">Privacy-first AI research assistant - Tout fonctionne dans votre navigateur</p>
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold">Local LLM Literature Reviewer</h1>
+        <p class="text-blue-100 text-sm">Privacy-first AI research assistant</p>
+      </div>
+      <div id="header-stats" class="flex items-center gap-4 text-sm">
+        <span class="px-3 py-1 bg-white/20 rounded"><span id="stat-docs">0</span> docs</span>
+        <span class="px-3 py-1 bg-white/20 rounded"><span id="stat-chunks">0</span> chunks</span>
+        <span class="px-3 py-1 bg-white/20 rounded"><span id="stat-vectors">0</span> vectors</span>
+      </div>
+    </div>
   `;
   
-  // Container principal avec grid layout
-  const mainGrid = document.createElement('div');
-  mainGrid.className = 'grid grid-cols-1 lg:grid-cols-3 gap-6';
+  // Container principal - 2 colonnes égales
+  const mainContainer = document.createElement('div');
+  mainContainer.className = 'flex-1 flex gap-4 p-4 overflow-hidden';
   
-  // Colonne principale (centre)
-  const mainColumn = document.createElement('div');
-  mainColumn.className = 'lg:col-span-2 space-y-6';
+  // === COLONNE GAUCHE : Documents ===
+  const leftColumn = document.createElement('div');
+  leftColumn.id = 'left-column';
+  leftColumn.className = 'w-1/2 flex flex-col gap-4 overflow-hidden';
   
-  // Zone de contenu principal
-  const mainContent = document.createElement('div');
-  mainContent.id = 'main-content';
-  mainContent.className = 'bg-white p-6 rounded-lg shadow space-y-6';
+  // Section Upload
+  const uploadSection = document.createElement('div');
+  uploadSection.id = 'upload-section';
+  uploadSection.className = 'bg-white rounded-lg shadow p-4';
+  uploadSection.innerHTML = '<h2 class="text-lg font-bold text-gray-800 mb-3">Upload Documents</h2>';
+  uploadSection.appendChild(createDropzone());
   
-  // Zone de drag & drop
-  const dropzone = createDropzone();
-  mainContent.appendChild(dropzone);
+  // Section Liste des documents
+  const docsSection = document.createElement('div');
+  docsSection.className = 'bg-white rounded-lg shadow p-4 flex-1 overflow-hidden flex flex-col';
+  docsSection.innerHTML = `
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-bold text-gray-800">Documents</h2>
+      <div class="flex gap-2">
+        <button id="extract-all-btn" class="px-3 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200 transition-colors">
+          Extraire tout
+        </button>
+      </div>
+    </div>
+  `;
+  const fileListContainer = document.createElement('div');
+  fileListContainer.className = 'flex-1 overflow-y-auto';
+  fileListContainer.appendChild(createFileList());
+  docsSection.appendChild(fileListContainer);
   
-  // Liste des fichiers
-  const fileList = createFileList();
-  mainContent.appendChild(fileList);
+  leftColumn.appendChild(uploadSection);
+  leftColumn.appendChild(docsSection);
   
-  mainColumn.appendChild(mainContent);
+  // === COLONNE DROITE : Ingestion & Vector Store ===
+  const rightColumn = document.createElement('div');
+  rightColumn.className = 'w-1/2 flex flex-col gap-4 overflow-hidden';
   
-  // Colonne latérale (droite)
-  const sidebar = document.createElement('div');
-  sidebar.className = 'space-y-6';
+  // Panel d'ingestion complet
+  const ingestionPanel = createIngestionPanel();
+  rightColumn.appendChild(ingestionPanel);
   
-  // Panel de logs
-  const logsPanel = createLogsPanel();
-  sidebar.appendChild(logsPanel);
+  // Assembler
+  mainContainer.appendChild(leftColumn);
+  mainContainer.appendChild(rightColumn);
   
-  // Panel de debug
-  const debugPanel = createDebugPanel();
-  sidebar.appendChild(debugPanel);
-
-  // Memory Bank
-  const memoryBank = createMemoryBank();
-  sidebar.appendChild(memoryBank);
+  // Footer avec logs et debug
+  const footer = document.createElement('div');
+  footer.className = 'bg-white border-t p-2 flex gap-4';
   
-  // Assembler la grille
-  mainGrid.appendChild(mainColumn);
-  mainGrid.appendChild(sidebar);
+  const logsContainer = document.createElement('div');
+  logsContainer.className = 'flex-1 max-h-32 overflow-hidden';
+  logsContainer.appendChild(createLogsPanel());
   
-  // Footer avec stats
-  const footer = document.createElement('footer');
-  footer.className = 'mt-6 bg-gray-100 p-4 rounded-lg';
-  footer.id = 'app-footer';
-  updateFooter(footer);
+  const debugContainer = document.createElement('div');
+  debugContainer.className = 'w-64';
+  debugContainer.appendChild(createDebugPanel());
+  
+  footer.appendChild(logsContainer);
+  footer.appendChild(debugContainer);
   
   // Assembler tout
   container.appendChild(header);
-  container.appendChild(mainGrid);
+  container.appendChild(mainContainer);
   container.appendChild(footer);
   
-  // Rendre les logs initiaux
-  renderInitialLogs(state.logs, logsPanel);
+  // Setup des boutons d'action groupée
+  setupBulkActions();
   
-  // Mettre à jour le footer périodiquement
-  setInterval(() => updateFooter(footer), 1000);
+  // Mettre à jour les stats
+  updateHeaderStats();
+  setInterval(updateHeaderStats, 1000);
+  
+  // Rendre les logs initiaux
+  const logsPanel = logsContainer.querySelector('#logs-panel');
+  if (logsPanel) {
+    renderInitialLogs(state.logs, logsPanel);
+  }
 }
 
 /**
- * Met à jour le footer avec les stats de l'application
+ * Configure les actions groupées
  */
-function updateFooter(footer) {
-  const stats = {
-    docs: state.docs.length,
-    chunks: state.chunks.length,
-    vectorStore: state.vectorStore.length,
-    chatMessages: state.chatHistory.length,
-    modelStatus: state.model.loaded ? '✅ Ready' : state.model.loading ? '⏳ Loading...' : '❌ Not loaded'
-  };
-  
-  footer.innerHTML = `
-    <div class="flex flex-wrap gap-4 text-sm text-gray-600">
-      <span><strong>Documents:</strong> ${stats.docs}</span>
-      <span><strong>Chunks:</strong> ${stats.chunks}</span>
-      <span><strong>Vector Store:</strong> ${stats.vectorStore}</span>
-      <span><strong>Chat Messages:</strong> ${stats.chatMessages}</span>
-      <span><strong>Model:</strong> ${stats.modelStatus}</span>
-    </div>
-  `;
+function setupBulkActions() {
+  const extractAllBtn = document.getElementById('extract-all-btn');
+  if (extractAllBtn) {
+    extractAllBtn.addEventListener('click', () => {
+      // Déclencher l'extraction pour tous les docs non extraits
+      const event = new CustomEvent('action:extractAll');
+      window.dispatchEvent(event);
+    });
+  }
 }
 
+/**
+ * Met à jour les stats dans le header
+ */
+function updateHeaderStats() {
+  const docsEl = document.getElementById('stat-docs');
+  const chunksEl = document.getElementById('stat-chunks');
+  const vectorsEl = document.getElementById('stat-vectors');
+  
+  if (docsEl) docsEl.textContent = state.docs.length;
+  if (chunksEl) chunksEl.textContent = state.chunks.length;
+  if (vectorsEl) vectorsEl.textContent = state.vectorStore.length;
+}

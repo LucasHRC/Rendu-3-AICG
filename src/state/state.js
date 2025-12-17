@@ -168,6 +168,9 @@ export function removeDocument(id) {
 
   const doc = state.docs[index];
   
+  // Supprimer les embeddings associés
+  removeEmbeddingsByDocId(id);
+  
   // Supprimer les chunks associés
   removeChunksByDocId(id);
   
@@ -340,6 +343,87 @@ export function getChunksStats() {
   });
 
   return stats;
+}
+
+// ============================================
+// Fonctions Vector Store (Embeddings)
+// ============================================
+
+/**
+ * Ajoute un embedding au vector store
+ * @param {string} chunkId - L'ID du chunk
+ * @param {Float32Array} vector - Le vecteur d'embedding
+ * @returns {boolean} - true si ajouté avec succès
+ */
+export function addEmbedding(chunkId, vector) {
+  // Vérifier que le chunk existe
+  const chunk = state.chunks.find(c => c.id === chunkId);
+  if (!chunk) {
+    addLog('warning', `Chunk not found for embedding: ${chunkId}`);
+    return false;
+  }
+
+  // Vérifier si l'embedding existe déjà
+  const existingIndex = state.vectorStore.findIndex(v => v.chunkId === chunkId);
+  if (existingIndex !== -1) {
+    state.vectorStore[existingIndex].vector = vector;
+  } else {
+    state.vectorStore.push({
+      chunkId,
+      vector,
+      source: chunk.source,
+      docId: chunk.docId
+    });
+  }
+
+  // Émission d'événement
+  window.dispatchEvent(new CustomEvent('state:embeddingAdded', { 
+    detail: { chunkId, vectorSize: vector.length } 
+  }));
+
+  return true;
+}
+
+/**
+ * Récupère un embedding par chunkId
+ * @param {string} chunkId - L'ID du chunk
+ * @returns {Float32Array|null} - Le vecteur ou null
+ */
+export function getEmbedding(chunkId) {
+  const entry = state.vectorStore.find(v => v.chunkId === chunkId);
+  return entry ? entry.vector : null;
+}
+
+/**
+ * Supprime les embeddings d'un document
+ * @param {string} docId - L'ID du document
+ * @returns {number} - Nombre d'embeddings supprimés
+ */
+export function removeEmbeddingsByDocId(docId) {
+  const initialLength = state.vectorStore.length;
+  state.vectorStore = state.vectorStore.filter(v => v.docId !== docId);
+  const removedCount = initialLength - state.vectorStore.length;
+
+  if (removedCount > 0) {
+    window.dispatchEvent(new CustomEvent('state:embeddingsRemoved', { 
+      detail: { docId, count: removedCount } 
+    }));
+    addLog('info', `${removedCount} embeddings supprimés pour document ${docId}`);
+  }
+
+  return removedCount;
+}
+
+/**
+ * Obtient les statistiques du vector store
+ * @returns {object} - Statistiques
+ */
+export function getVectorStoreStats() {
+  return {
+    total: state.vectorStore.length,
+    chunksWithEmbeddings: state.vectorStore.length,
+    chunksWithoutEmbeddings: state.chunks.length - state.vectorStore.length
+  };
 }
 
 // Initialisation

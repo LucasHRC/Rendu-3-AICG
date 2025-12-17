@@ -16,7 +16,7 @@ export function createDebugPanel() {
   
   const title = document.createElement('h3');
   title.className = 'text-lg font-bold';
-  title.textContent = '🔍 Debug Mode';
+  title.textContent = 'Debug Mode';
   
   const toggle = document.createElement('button');
   toggle.id = 'debug-toggle';

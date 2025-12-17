@@ -10,7 +10,7 @@ export function createLogsPanel() {
   
   const logsTitle = document.createElement('h3');
   logsTitle.className = 'text-white font-bold mb-2 text-lg';
-  logsTitle.textContent = '📋 Logs';
+  logsTitle.textContent = 'Logs';
   
   const logsList = document.createElement('div');
   logsList.id = 'logs-list';
@@ -69,12 +69,12 @@ function addLogEntry(logEntry, container) {
 
 function getLogIcon(level) {
   const icons = {
-    info: 'ℹ️',
-    success: '✅',
-    warning: '⚠️',
-    error: '❌'
+    info: '[i]',
+    success: '[+]',
+    warning: '[!]',
+    error: '[x]'
   };
-  return icons[level] || '•';
+  return icons[level] || '[.]';
 }
 
 function getLogColor(level) {

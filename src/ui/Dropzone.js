@@ -5,35 +5,42 @@
 import { addDocument, addLog } from '../state/state.js';
 import { validatePDF } from '../utils/fileUtils.js';
 
+// Icône SVG pour le document
+const PDF_ICON = `
+<svg class="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" 
+    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+</svg>
+`;
+
 /**
  * Crée la zone de drag & drop
  * @returns {HTMLElement} - L'élément dropzone
  */
 export function createDropzone() {
-  const dropzone = document.createElement('div');
-  dropzone.id = 'dropzone';
-  dropzone.className = 'border-2 border-dashed border-gray-300 rounded-lg p-12 text-center cursor-pointer transition-all duration-200 hover:border-blue-400 hover:bg-blue-50';
+  const container = document.createElement('div');
   
-  // Contenu de la zone
-  dropzone.innerHTML = `
-    <div class="flex flex-col items-center justify-center space-y-4">
-      <div class="text-6xl">📄</div>
-      <div class="space-y-2">
-        <p class="text-xl font-semibold text-gray-700">Glissez vos PDFs ici</p>
-        <p class="text-gray-500">ou cliquez pour sélectionner</p>
-        <p class="text-sm text-gray-400 mt-2">Formats acceptés : .pdf uniquement</p>
+  // Input file caché avec ID unique
+  const inputId = 'pdf-file-input-' + Math.random().toString(36).substr(2, 9);
+  
+  // Utiliser un label qui déclenche nativement l'input
+  container.innerHTML = `
+    <input type="file" id="${inputId}" accept=".pdf,application/pdf" multiple style="display: none;" />
+    <label for="${inputId}" id="dropzone" class="block border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer transition-all duration-200 hover:border-blue-400 hover:bg-blue-50">
+      <div class="flex flex-col items-center justify-center space-y-3">
+        ${PDF_ICON}
+        <div class="space-y-1">
+          <p class="text-lg font-semibold text-gray-700">Glissez vos PDFs ici</p>
+          <p class="text-gray-500 text-sm">ou cliquez pour selectionner</p>
+          <p class="text-xs text-gray-400 mt-2">Formats acceptes : .pdf uniquement</p>
+        </div>
       </div>
-    </div>
-    <div id="dropzone-error" class="mt-4 text-red-500 text-sm hidden"></div>
+      <div id="dropzone-error" class="mt-4 text-red-500 text-sm hidden"></div>
+    </label>
   `;
-
-  // Input file caché
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file';
-  fileInput.accept = '.pdf,application/pdf';
-  fileInput.multiple = true;
-  fileInput.className = 'hidden';
-  dropzone.appendChild(fileInput);
+  
+  const fileInput = container.querySelector('input');
+  const dropzone = container.querySelector('#dropzone');
 
   // Gestion des événements drag & drop
   dropzone.addEventListener('dragover', (e) => {
@@ -63,11 +70,6 @@ export function createDropzone() {
     handleFiles(files, dropzone);
   });
 
-  // Gestion du click pour ouvrir le file picker
-  dropzone.addEventListener('click', () => {
-    fileInput.click();
-  });
-
   // Gestion de la sélection de fichiers via file picker
   fileInput.addEventListener('change', (e) => {
     const files = Array.from(e.target.files);
@@ -76,7 +78,7 @@ export function createDropzone() {
     fileInput.value = '';
   });
 
-  return dropzone;
+  return container;
 }
 
 /**
@@ -85,8 +87,6 @@ export function createDropzone() {
  * @param {HTMLElement} dropzone - L'élément dropzone pour afficher les erreurs
  */
 function handleFiles(files, dropzone) {
-  const errorElement = dropzone.querySelector('#dropzone-error');
-  
   if (files.length === 0) {
     return;
   }
@@ -140,6 +140,8 @@ function handleFiles(files, dropzone) {
  */
 function showError(dropzone, message) {
   const errorElement = dropzone.querySelector('#dropzone-error');
+  if (!errorElement) return;
+  
   errorElement.textContent = message;
   errorElement.classList.remove('hidden');
   
@@ -159,6 +161,8 @@ function showError(dropzone, message) {
  */
 function hideError(dropzone) {
   const errorElement = dropzone.querySelector('#dropzone-error');
+  if (!errorElement) return;
+  
   errorElement.classList.add('hidden');
   errorElement.textContent = '';
   
@@ -166,4 +170,3 @@ function hideError(dropzone) {
   dropzone.classList.remove('border-red-500', 'bg-red-50');
   dropzone.classList.add('border-gray-300', 'hover:border-blue-400');
 }
-

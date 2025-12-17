@@ -18,8 +18,8 @@ export function createFileList() {
   container.className = 'mt-6';
 
   const title = document.createElement('h3');
-  title.className = 'text-xl font-bold mb-4 text-gray-800';
-  title.textContent = '📚 Documents Uploadés';
+  title.className = 'text-lg font-bold mb-4 text-gray-800';
+  title.textContent = 'Documents Uploades';
 
   const list = document.createElement('div');
   list.id = 'file-list';
@@ -46,6 +46,14 @@ export function createFileList() {
 
   window.addEventListener('state:docExtracted', () => {
     renderFileList();
+  });
+
+  // Écouter l'action "Extraire tout"
+  window.addEventListener('action:extractAll', async () => {
+    const docsToExtract = state.docs.filter(doc => !doc.extractedText && doc.status !== 'extracting');
+    for (const doc of docsToExtract) {
+      await handleExtraction(doc.id);
+    }
   });
 
   return container;
@@ -95,8 +103,10 @@ function createFileCard(doc) {
   fileInfo.className = 'flex items-center space-x-2 flex-1 min-w-0';
 
   const icon = document.createElement('span');
-  icon.className = 'text-2xl flex-shrink-0';
-  icon.textContent = '📄';
+  icon.className = 'flex-shrink-0';
+  icon.innerHTML = `<svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+  </svg>`;
 
   const filename = document.createElement('span');
   filename.className = 'font-semibold text-gray-800 truncate';
@@ -113,7 +123,7 @@ function createFileCard(doc) {
   // Bouton pour visualiser le PDF
   const viewButton = document.createElement('button');
   viewButton.className = 'px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors';
-  viewButton.textContent = '👁️ Voir';
+  viewButton.textContent = 'Voir';
   viewButton.title = 'Visualiser le PDF';
   viewButton.setAttribute('aria-label', `Visualiser ${doc.filename}`);
   viewButton.addEventListener('click', (e) => {
@@ -125,7 +135,7 @@ function createFileCard(doc) {
   if (!doc.extractedText && doc.status !== 'extracting') {
     const extractButton = document.createElement('button');
     extractButton.className = 'px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors';
-    extractButton.textContent = '📝 Extraire';
+    extractButton.textContent = 'Extraire';
     extractButton.title = 'Extraire le texte du PDF';
     extractButton.setAttribute('aria-label', `Extraire ${doc.filename}`);
     extractButton.addEventListener('click', async (e) => {
@@ -138,8 +148,8 @@ function createFileCard(doc) {
   // Indicateur d'extraction en cours
   if (doc.status === 'extracting') {
     const extractingIndicator = document.createElement('span');
-    extractingIndicator.className = 'px-3 py-1 text-sm bg-yellow-100 text-yellow-800 rounded';
-    extractingIndicator.textContent = '⏳ Extraction...';
+    extractingIndicator.className = 'px-3 py-1 text-sm bg-yellow-100 text-yellow-800 rounded animate-pulse';
+    extractingIndicator.textContent = 'Extraction...';
     actionsContainer.appendChild(extractingIndicator);
   }
 
@@ -286,13 +296,13 @@ async function handleExtraction(docId) {
     // Mettre à jour le document avec les données d'extraction
     updateDocumentExtraction(docId, extractionData);
 
-    // Créer les chunks (500 chars, overlap 100)
+    // Créer les chunks (500 chars cible, 1 phrase d'overlap)
     const chunks = createChunksForDocument(
       extractionData.text,
       doc.filename,
       docId,
-      500,  // chunkSize
-      100   // overlap
+      500,  // targetSize
+      1     // overlapSentences
     );
 
     // Ajouter les chunks au state

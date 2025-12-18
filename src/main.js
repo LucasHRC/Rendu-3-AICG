@@ -10,6 +10,14 @@ import { createIngestionPanel } from './ui/IngestionPanel.js';
 import { createChatPanel } from './ui/ChatPanel.js';
 import { createSystemControls } from './ui/SystemControls.js';
 import { createHistoryPanel } from './ui/HistoryPanel.js';
+// VisualizationTabs removed - agents now integrated in ChatPanel
+
+// Import des agents pour enregistrer leurs event listeners
+import './agents/HubAgent.js';
+import './agents/AtlasAgent.js';
+import './agents/TimelineAgent.js';
+import './agents/ScrollyAgent.js';
+import './utils/exportViz.js';
 
 let currentTab = 'documents';
 
@@ -161,7 +169,7 @@ function createChatView(container) {
   view.id = 'chat-view';
   view.className = 'flex-1 flex gap-4 min-h-0 hidden';
   
-  // Colonne gauche : Chat
+  // Colonne gauche : Chat (agents intégrés directement)
   const leftColumn = document.createElement('div');
   leftColumn.className = 'flex-1 flex flex-col min-h-0';
   leftColumn.appendChild(createChatPanel());

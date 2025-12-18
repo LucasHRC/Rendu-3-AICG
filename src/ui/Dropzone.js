@@ -11,13 +11,10 @@ import { showQuickUploadWorkflow } from './QuickUpload.js';
  */
 export function createDropzone() {
   const container = document.createElement('div');
-  const inputId = 'pdf-file-input-' + Math.random().toString(36).substr(2, 9);
   
   container.innerHTML = `
-    <input type="file" id="${inputId}" accept=".pdf,application/pdf" multiple 
-           style="position:absolute;left:-9999px;width:1px;height:1px;" />
-    <label for="${inputId}" id="dropzone" 
-           class="block border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer transition-all hover:border-blue-400 hover:bg-blue-50">
+    <div id="dropzone" 
+         class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer transition-all hover:border-blue-400 hover:bg-blue-50">
       <div class="flex flex-col items-center justify-center">
         <svg class="w-10 h-10 text-blue-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" 
@@ -27,11 +24,25 @@ export function createDropzone() {
         <p class="text-sm text-gray-500 mt-1">or click to browse</p>
       </div>
       <div id="dropzone-error" class="mt-4 text-red-600 text-sm font-medium hidden"></div>
-    </label>
+    </div>
   `;
   
-  const fileInput = container.querySelector('input');
   const dropzone = container.querySelector('#dropzone');
+
+  // Click to open file dialog via global input
+  dropzone.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const globalInput = document.getElementById('global-file-input');
+    if (globalInput) {
+      // Remove old listener if any, and add new one
+      globalInput.onchange = (evt) => {
+        handleFiles(Array.from(evt.target.files), dropzone);
+        globalInput.value = '';
+      };
+      globalInput.click();
+    }
+  });
 
   // Drag events
   dropzone.addEventListener('dragover', (e) => {
@@ -54,11 +65,6 @@ export function createDropzone() {
     dropzone.classList.remove('border-blue-500', 'bg-blue-100', 'border-solid');
     dropzone.classList.add('border-gray-300', 'border-dashed');
     handleFiles(Array.from(e.dataTransfer.files), dropzone);
-  });
-
-  fileInput.addEventListener('change', (e) => {
-    handleFiles(Array.from(e.target.files), dropzone);
-    fileInput.value = '';
   });
 
   return container;

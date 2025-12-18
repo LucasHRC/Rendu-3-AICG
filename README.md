@@ -1,59 +1,89 @@
 # Local LLM Literature Reviewer
 
-A privacy-first, fully browser-based AI research assistant. This application runs entirely on the client side using WebLLM for reasoning and Transformers.js for embeddings. No data leaves your browser.
+Application web client-side pour la revue de litterature scientifique. Utilise WebLLM pour le raisonnement et Transformers.js pour les embeddings. Aucune donnee ne quitte le navigateur.
 
-## Overview
-
-Upload PDF research papers, automatically extract and vectorize their content, then use semantic search to find relevant passages. The RAG (Retrieval Augmented Generation) engine enables context-aware interactions with your documents.
+## Vue d'ensemble
 
 ```
-PDF Upload --> Text Extraction --> Chunking --> Embeddings --> Vector Store --> Semantic Search
+PDF --> Extraction --> Chunking --> Embeddings --> Vector Store --> RAG --> LLM
 ```
 
-## Features
+Importez vos articles PDF, vectorisez automatiquement le contenu, puis interrogez vos documents via un chatbot RAG ou generez des visualisations interactives.
 
-- Drag-and-drop PDF upload with multi-file support
-- Automatic text extraction using PDF.js
-- Intelligent semantic chunking (respects sentence boundaries)
-- Vector embeddings with Transformers.js (all-MiniLM-L6-v2, 384 dimensions)
-- Custom vector store with cosine similarity search
-- WebGPU acceleration with WASM fallback
-- Export/Import vector database
-- Real-time console and debug tools
+## Fonctionnalites principales
 
-## Tech Stack
+- Upload drag-and-drop multi-fichiers
+- Extraction PDF (PDF.js) + chunking semantique
+- Embeddings Transformers.js (all-MiniLM-L6-v2, 384 dim)
+- Vector store custom avec recherche cosine
+- Chat RAG avec citations de sources
+- Export/Import base vectorielle complete
+- Historique des conversations
 
-| Component | Technology |
-|-----------|------------|
-| Framework | Vanilla JavaScript (ES Modules) |
-| Build Tool | Vite |
-| Styling | Tailwind CSS |
-| PDF Processing | PDF.js |
-| Embeddings | Transformers.js (Xenova/all-MiniLM-L6-v2) |
-| LLM Inference | WebLLM (planned) |
-| Deployment | GitHub Pages |
+## Agents Visuels
+
+Quatre agents specialises generent des visualisations interactives a partir de vos documents (necessite modele 3B+).
+
+| Agent | Description | Technologie |
+|-------|-------------|-------------|
+| **Hub** | Heatmap de couverture thematique documents/themes | D3.js |
+| **Atlas** | Graphe de force des concepts et leurs relations | D3.js |
+| **Timeline** | Chronologie des idees et publications | D3.js |
+| **Narrative** | Presentation scrollytelling animee | GSAP |
+
+### Hub (Exploration Hub)
+Analyse la couverture de chaque document sur les themes identifies. Affiche une matrice interactive ou l'intensite represente la pertinence.
+
+### Atlas (Concept Atlas)
+Cartographie les concepts extraits et leurs connexions. Les noeuds representent les idees, les liens leurs relations semantiques.
+
+### Timeline (Influence Timeline)
+Visualise l'evolution temporelle des publications et concepts. Permet d'identifier les pivots et tendances.
+
+### Narrative (Scrollytelling)
+Genere une narration guidee par le scroll. Presente les insights cles avec transitions animees.
+
+## Stack Technique
+
+| Composant | Technologie |
+|-----------|-------------|
+| Framework | Vanilla JS (ES Modules) |
+| Build | Vite |
+| Style | Tailwind CSS |
+| PDF | PDF.js |
+| Embeddings | Transformers.js (all-MiniLM-L6-v2) |
+| LLM | WebLLM (Llama 3.2, Qwen, Phi, Mistral) |
+| Visualisation | D3.js, GSAP |
 
 ## Architecture
 
 ```
 src/
-├── main.js              # Application entry point
-├── state/
-│   └── state.js         # Centralized state management
+├── main.js                 # Entry point
+├── state/state.js          # State centralise
 ├── rag/
-│   ├── pdfExtract.js    # PDF text extraction
-│   ├── chunker.js       # Semantic text chunking
-│   ├── embeddings.js    # Transformers.js integration
-│   └── search.js        # Cosine similarity search
+│   ├── pdfExtract.js       # Extraction PDF
+│   ├── chunker.js          # Chunking semantique
+│   ├── embeddings.js       # Transformers.js
+│   └── search.js           # Recherche cosine
+├── llm/
+│   ├── webllm.js           # WebLLM integration
+│   ├── chat.js             # Logique RAG + prompts
+│   └── jsonRepair.js       # Reparation JSON LLM
+├── agents/
+│   ├── HubAgent.js         # Heatmap coverage
+│   ├── AtlasAgent.js       # Force graph concepts
+│   ├── TimelineAgent.js    # Timeline chronologique
+│   └── ScrollyAgent.js     # Scrollytelling GSAP
 ├── ui/
-│   ├── Dropzone.js      # File upload component
-│   ├── FileList.js      # Document management
-│   ├── IngestionPanel.js # Vector store UI
-│   ├── PDFViewer.js     # PDF preview modal
-│   └── QuickUpload.js   # Guided upload workflow
+│   ├── ChatPanel.js        # Interface chat + agents
+│   ├── HistoryPanel.js     # Historique conversations
+│   ├── QuickUpload.js      # Workflow upload guide
+│   └── ...
 └── utils/
-    ├── fileUtils.js     # File validation
-    └── namingSuggestions.js
+    ├── markdown.js         # Rendu GFM complet
+    ├── keywordExtract.js   # Extraction mots-cles
+    └── exportViz.js        # Export PNG/SVG/JSON
 ```
 
 ## Local Development

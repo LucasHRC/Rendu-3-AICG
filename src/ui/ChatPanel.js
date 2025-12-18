@@ -1,13 +1,30 @@
 /**
- * Panel Chat - Interface de conversation avec mode dual pour comparaison
+ * Panel Chat - Interface de conversation avec agents visuels intégrés
  */
 
 import { addLog, state } from '../state/state.js';
 import { initWebLLM, isModelReady, isModelLoading, getLoadedModel, isDualMode, MODEL_CATALOG } from '../llm/webllm.js';
-import { getChatHistory, sendMessage, generateLiteratureReview, clearChatHistory } from '../llm/chat.js';
+import { getChatHistory, sendMessage, clearChatHistory } from '../llm/chat.js';
 import { parseMarkdown } from '../utils/markdown.js';
 
 let dualModeEnabled = false;
+let currentView = 'chat'; // 'chat' ou 'agent'
+let currentAgentData = null;
+
+// Icônes SVG pour les agents
+const AGENT_ICONS = {
+  hub: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>`,
+  atlas: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>`,
+  timeline: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
+  scrolly: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`
+};
+
+const AGENT_NAMES = {
+  hub: 'Exploration Hub',
+  atlas: 'Concept Atlas',
+  timeline: 'Timeline',
+  scrolly: 'Narrative'
+};
 
 /**
  * Cree le panel de chat
@@ -19,10 +36,10 @@ export function createChatPanel() {
 
   panel.innerHTML = `
     <!-- Header -->
-    <div class="flex-shrink-0 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+    <div class="flex-shrink-0 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
+          <div class="w-10 h-10 bg-gradient-to-br from-gray-700 to-gray-900 rounded-xl flex items-center justify-center">
             <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
@@ -33,8 +50,12 @@ export function createChatPanel() {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button id="toggle-dual-btn" class="px-3 py-1.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors">
-            Compare Models
+          <button id="back-to-chat-btn" class="hidden px-3 py-1.5 text-xs font-medium bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
+            <svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+            Retour Chat
+          </button>
+          <button id="toggle-dual-btn" class="px-3 py-1.5 text-xs font-medium bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
+            Compare
           </button>
           <button id="clear-all-chat-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Clear all chats">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -45,23 +66,53 @@ export function createChatPanel() {
       </div>
     </div>
 
-    <!-- Chat containers -->
-    <div id="chat-containers" class="flex-1 flex gap-2 p-2 min-h-0 overflow-hidden">
+    <!-- Main Content Area -->
+    <div id="main-content-area" class="flex-1 flex gap-2 p-2 min-h-0 overflow-hidden">
       ${createChatColumn('primary')}
     </div>
 
-    <!-- Shared input -->
-    <div class="flex-shrink-0 p-4 border-t border-gray-100 bg-gray-50">
-      <div class="flex gap-2 mb-2">
-        <button id="lit-review-btn" class="px-3 py-1.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors disabled:opacity-50" disabled>
-          Generate Literature Review
+    <!-- Agent Visualization Area (hidden by default) -->
+    <div id="agent-view" class="hidden flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div id="agent-header" class="flex-shrink-0 px-4 py-2 bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200">
+        <div class="flex items-center gap-2">
+          <span id="agent-icon" class="text-gray-600"></span>
+          <span id="agent-title" class="text-sm font-semibold text-gray-800"></span>
+          <span id="agent-status" class="text-xs text-gray-500 ml-auto"></span>
+        </div>
+      </div>
+      <div id="agent-content" class="flex-1 overflow-auto p-4"></div>
+    </div>
+
+    <!-- Agent Mode Selector -->
+    <div class="flex-shrink-0 p-3 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
+      <p class="text-xs font-medium text-gray-500 mb-2">Agents (min. 3B)</p>
+      <div id="agent-mode-selector" class="grid grid-cols-4 gap-2">
+        <button data-agent="hub" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.hub}</span>
+          <span class="text-xs font-medium text-gray-600">Hub</span>
+        </button>
+        <button data-agent="atlas" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.atlas}</span>
+          <span class="text-xs font-medium text-gray-600">Atlas</span>
+        </button>
+        <button data-agent="timeline" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.timeline}</span>
+          <span class="text-xs font-medium text-gray-600">Timeline</span>
+        </button>
+        <button data-agent="scrolly" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.scrolly}</span>
+          <span class="text-xs font-medium text-gray-600">Narrative</span>
         </button>
       </div>
+    </div>
+
+    <!-- Shared input -->
+    <div id="chat-input-area" class="flex-shrink-0 p-4 border-t border-gray-100 bg-gray-50">
       <div class="flex gap-2">
         <input type="text" id="chat-input" placeholder="Ask about your documents..."
-               class="flex-1 px-4 py-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+               class="flex-1 px-4 py-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent disabled:bg-gray-100"
                disabled />
-        <button id="send-btn" class="px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+        <button id="send-btn" class="px-4 py-3 bg-gray-800 text-white rounded-xl hover:bg-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
           </svg>
@@ -81,14 +132,13 @@ export function createChatPanel() {
 
 function createChatColumn(slot) {
   const isPrimary = slot === 'primary';
-  const colorClass = isPrimary ? 'blue' : 'green';
   
   return `
     <div id="chat-column-${slot}" class="flex-1 flex flex-col min-h-0 border border-gray-200 rounded-xl overflow-hidden">
       <!-- Column header with model selector -->
-      <div class="flex-shrink-0 px-3 py-2 bg-${colorClass}-50 border-b border-${colorClass}-100">
+      <div class="flex-shrink-0 px-3 py-2 bg-gray-50 border-b border-gray-100">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-bold text-${colorClass}-800">${isPrimary ? 'Model A' : 'Model B'}</span>
+          <span class="text-xs font-bold text-gray-700">${isPrimary ? 'Model A' : 'Model B'}</span>
           <span id="model-status-${slot}" class="text-xs text-gray-500">Not loaded</span>
         </div>
         <div class="flex gap-2">
@@ -97,13 +147,13 @@ function createChatColumn(slot) {
               <option value="${m.id}">${m.name} (${m.size})</option>
             `).join('')}
           </select>
-          <button id="load-model-${slot}" class="px-3 py-1.5 text-xs font-medium bg-${colorClass}-600 text-white rounded-lg hover:bg-${colorClass}-700 transition-colors">
+          <button id="load-model-${slot}" class="px-3 py-1.5 text-xs font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors">
             Load
           </button>
         </div>
         <div id="model-progress-${slot}" class="hidden mt-2">
           <div class="w-full bg-gray-200 rounded-full h-1.5">
-            <div id="progress-bar-${slot}" class="bg-${colorClass}-600 h-1.5 rounded-full transition-all" style="width: 0%"></div>
+            <div id="progress-bar-${slot}" class="bg-gray-600 h-1.5 rounded-full transition-all" style="width: 0%"></div>
           </div>
           <p id="progress-text-${slot}" class="text-xs text-gray-500 mt-1 text-center"></p>
         </div>
@@ -123,37 +173,47 @@ function setupChatEvents(panel) {
   const sendBtn = panel.querySelector('#send-btn');
   const input = panel.querySelector('#chat-input');
   const clearBtn = panel.querySelector('#clear-all-chat-btn');
-  const litReviewBtn = panel.querySelector('#lit-review-btn');
   const toggleDualBtn = panel.querySelector('#toggle-dual-btn');
+  const backBtn = panel.querySelector('#back-to-chat-btn');
+  const agentBtns = panel.querySelectorAll('.agent-mode-btn');
+
+  // Back to chat button
+  backBtn?.addEventListener('click', () => {
+    showChatView();
+  });
+
+  // Agent mode buttons
+  agentBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const agentId = btn.dataset.agent;
+      launchAgent(agentId);
+    });
+  });
 
   // Toggle dual mode
   toggleDualBtn?.addEventListener('click', () => {
     dualModeEnabled = !dualModeEnabled;
-    const containers = panel.querySelector('#chat-containers');
+    const containers = panel.querySelector('#main-content-area');
     const modeLabel = panel.querySelector('#chat-mode-label');
     
     if (dualModeEnabled) {
       containers.innerHTML = createChatColumn('primary') + createChatColumn('secondary');
-      toggleDualBtn.textContent = 'Single Mode';
-      toggleDualBtn.className = 'px-3 py-1.5 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors';
-      modeLabel.textContent = 'Dual Mode - Compare Models';
+      toggleDualBtn.textContent = 'Single';
+      modeLabel.textContent = 'Dual Mode';
     } else {
       containers.innerHTML = createChatColumn('primary');
-      toggleDualBtn.textContent = 'Compare Models';
-      toggleDualBtn.className = 'px-3 py-1.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors';
+      toggleDualBtn.textContent = 'Compare';
       modeLabel.textContent = 'Single Model Mode';
     }
     
-    // Re-setup column events
     setupColumnEvents('primary');
     if (dualModeEnabled) setupColumnEvents('secondary');
     updateInputState();
   });
 
-  // Initial column setup
   setupColumnEvents('primary');
 
-  // Send message to active models
+  // Send message
   const handleSend = async () => {
     const message = input.value.trim();
     if (!message) return;
@@ -170,7 +230,6 @@ function setupChatEvents(panel) {
     input.disabled = true;
     sendBtn.disabled = true;
 
-    // Send to all active models in parallel
     const promises = activeSlots.map(slot => 
       sendMessage(message, getSettings(), (token, full) => {
         updateStreamingMessage(full, slot);
@@ -192,38 +251,139 @@ function setupChatEvents(panel) {
     }
   });
 
-  // Clear all
   clearBtn?.addEventListener('click', () => {
     if (confirm('Clear all chat history?')) {
       clearChatHistory('primary');
       if (dualModeEnabled) clearChatHistory('secondary');
     }
   });
+}
 
-  // Literature Review
-  litReviewBtn?.addEventListener('click', async () => {
-    const slots = dualModeEnabled ? ['primary', 'secondary'] : ['primary'];
-    const activeSlots = slots.filter(s => isModelReady(s));
-    
-    if (activeSlots.length === 0 || state.vectorStore.length === 0) {
-      addLog('warning', 'Load models and embed documents first');
-      return;
+/**
+ * Lance un agent et affiche sa visualisation
+ */
+async function launchAgent(agentId) {
+  const mainContent = document.getElementById('main-content-area');
+  const agentView = document.getElementById('agent-view');
+  const backBtn = document.getElementById('back-to-chat-btn');
+  const inputArea = document.getElementById('chat-input-area');
+  const agentIcon = document.getElementById('agent-icon');
+  const agentTitle = document.getElementById('agent-title');
+  const agentStatus = document.getElementById('agent-status');
+  const agentContent = document.getElementById('agent-content');
+
+  // Switch to agent view
+  mainContent?.classList.add('hidden');
+  agentView?.classList.remove('hidden');
+  agentView?.classList.add('flex');
+  backBtn?.classList.remove('hidden');
+  inputArea?.classList.add('hidden');
+
+  // Update header
+  if (agentIcon) agentIcon.innerHTML = AGENT_ICONS[agentId];
+  if (agentTitle) agentTitle.textContent = AGENT_NAMES[agentId];
+  if (agentStatus) agentStatus.textContent = 'Generating...';
+
+  // Show loading
+  if (agentContent) {
+    agentContent.innerHTML = `
+      <div class="flex flex-col items-center justify-center h-full text-gray-400">
+        <div class="w-8 h-8 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin mb-4"></div>
+        <p class="text-sm">Generating ${AGENT_NAMES[agentId]}...</p>
+      </div>
+    `;
+  }
+
+  currentView = 'agent';
+
+  // Trigger agent generation
+  window.dispatchEvent(new CustomEvent('viz:generate', {
+    detail: {
+      agent: { id: agentId, name: AGENT_NAMES[agentId] },
+      onProgress: (pct, text) => {
+        if (agentStatus) agentStatus.textContent = text || `${pct}%`;
+      },
+      onComplete: (data) => {
+        currentAgentData = { agentId, data, timestamp: new Date() };
+        if (agentStatus) agentStatus.textContent = 'Ready';
+        
+        // Save to history
+        saveAgentToHistory(agentId, data);
+      }
     }
+  }));
+}
 
-    litReviewBtn.disabled = true;
-    litReviewBtn.textContent = 'Generating...';
+/**
+ * Affiche la vue chat
+ */
+function showChatView() {
+  const mainContent = document.getElementById('main-content-area');
+  const agentView = document.getElementById('agent-view');
+  const backBtn = document.getElementById('back-to-chat-btn');
+  const inputArea = document.getElementById('chat-input-area');
 
-    const promises = activeSlots.map(slot => 
-      generateLiteratureReview(getSettings(), (token, full) => {
-        updateStreamingMessage(full, slot);
-      }, slot).catch(err => addLog('error', `${slot}: ${err.message}`))
-    );
+  mainContent?.classList.remove('hidden');
+  agentView?.classList.add('hidden');
+  agentView?.classList.remove('flex');
+  backBtn?.classList.add('hidden');
+  inputArea?.classList.remove('hidden');
 
-    await Promise.all(promises);
+  currentView = 'chat';
+}
 
-    litReviewBtn.disabled = false;
-    litReviewBtn.textContent = 'Generate Literature Review';
-  });
+/**
+ * Sauvegarde un résultat d'agent dans l'historique
+ */
+function saveAgentToHistory(agentId, data) {
+  const entry = {
+    id: `agent-${Date.now()}`,
+    type: 'agent',
+    agentId,
+    agentName: AGENT_NAMES[agentId],
+    timestamp: new Date(),
+    data
+  };
+
+  if (!state.agentHistory) {
+    state.agentHistory = [];
+  }
+  state.agentHistory.unshift(entry);
+
+  // Limit to 20 entries
+  if (state.agentHistory.length > 20) {
+    state.agentHistory.pop();
+  }
+
+  window.dispatchEvent(new CustomEvent('agent:saved', { detail: entry }));
+}
+
+/**
+ * Affiche un résultat d'agent depuis l'historique
+ */
+export function showAgentFromHistory(entry) {
+  const mainContent = document.getElementById('main-content-area');
+  const agentView = document.getElementById('agent-view');
+  const backBtn = document.getElementById('back-to-chat-btn');
+  const inputArea = document.getElementById('chat-input-area');
+  const agentIcon = document.getElementById('agent-icon');
+  const agentTitle = document.getElementById('agent-title');
+  const agentStatus = document.getElementById('agent-status');
+
+  mainContent?.classList.add('hidden');
+  agentView?.classList.remove('hidden');
+  agentView?.classList.add('flex');
+  backBtn?.classList.remove('hidden');
+  inputArea?.classList.add('hidden');
+
+  if (agentIcon) agentIcon.innerHTML = AGENT_ICONS[entry.agentId];
+  if (agentTitle) agentTitle.textContent = entry.agentName;
+  if (agentStatus) agentStatus.textContent = new Date(entry.timestamp).toLocaleTimeString();
+
+  currentView = 'agent';
+
+  // Re-render the visualization
+  window.dispatchEvent(new CustomEvent('viz:restore', { detail: entry }));
 }
 
 function setupColumnEvents(slot) {
@@ -249,7 +409,7 @@ function setupColumnEvents(slot) {
 
       progress?.classList.add('hidden');
       loadBtn.textContent = 'Loaded';
-      loadBtn.className = loadBtn.className.replace(/bg-\w+-600/, 'bg-gray-400');
+      loadBtn.className = loadBtn.className.replace(/bg-gray-800/, 'bg-gray-400');
       modelSelect.disabled = true;
       updateModelStatus(slot);
       updateInputState();
@@ -275,13 +435,25 @@ function getSettings() {
 function updateInputState() {
   const input = document.getElementById('chat-input');
   const sendBtn = document.getElementById('send-btn');
-  const litReviewBtn = document.getElementById('lit-review-btn');
+  const agentBtns = document.querySelectorAll('.agent-mode-btn');
 
   const anyReady = isModelReady('primary') || isModelReady('secondary');
 
   if (input) input.disabled = !anyReady;
   if (sendBtn) sendBtn.disabled = !anyReady;
-  if (litReviewBtn) litReviewBtn.disabled = !anyReady;
+
+  // Vérifier si un modèle 3B+ est chargé
+  const loadedModel = getLoadedModel('primary') || getLoadedModel('secondary');
+  const is3BPlus = loadedModel && (
+    loadedModel.includes('3B') || 
+    loadedModel.includes('7B') || 
+    loadedModel.includes('Phi') ||
+    loadedModel.includes('Qwen')
+  );
+
+  agentBtns.forEach(btn => {
+    btn.disabled = !is3BPlus || state.vectorStore.length === 0;
+  });
 }
 
 function updateModelStatus(slot) {
@@ -294,7 +466,7 @@ function updateModelStatus(slot) {
     status.className = 'text-xs text-green-600 font-medium';
   } else if (isModelLoading(slot)) {
     status.textContent = 'Loading...';
-    status.className = 'text-xs text-blue-500';
+    status.className = 'text-xs text-gray-500';
   } else {
     status.textContent = 'Not loaded';
     status.className = 'text-xs text-gray-500';
@@ -328,14 +500,14 @@ function createMessageHTML(msg) {
   if (!isUser && msg.sources && msg.sources.length > 0) {
     sourcesHTML = `
       <details class="mt-2 text-xs">
-        <summary class="cursor-pointer text-blue-600 hover:text-blue-800 font-medium">
+        <summary class="cursor-pointer text-gray-500 hover:text-gray-700 font-medium">
           ${msg.sources.length} source(s)
         </summary>
-        <div class="mt-1 space-y-1 pl-2 border-l-2 border-blue-200">
+        <div class="mt-1 space-y-1 pl-2 border-l-2 border-gray-200">
           ${msg.sources.map((s, i) => `
-            <div class="bg-blue-50 p-1.5 rounded text-xs">
-              <span class="font-semibold text-blue-800">[${i + 1}] ${s.source}</span>
-              <span class="text-blue-600 ml-1">${(s.score * 100).toFixed(0)}%</span>
+            <div class="bg-gray-50 p-1.5 rounded text-xs">
+              <span class="font-semibold text-gray-700">[${i + 1}] ${s.source}</span>
+              <span class="text-gray-500 ml-1">${(s.score * 100).toFixed(0)}%</span>
             </div>
           `).join('')}
         </div>
@@ -347,10 +519,10 @@ function createMessageHTML(msg) {
 
   return `
     <div class="flex ${isUser ? 'justify-end' : 'justify-start'}">
-      <div class="max-w-[90%] ${isUser ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'} rounded-xl px-3 py-2">
+      <div class="max-w-[90%] ${isUser ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-900'} rounded-xl px-3 py-2">
         <div class="text-xs ${isUser ? '' : 'prose prose-xs max-w-none'}">${contentHTML}</div>
         ${sourcesHTML}
-        <div class="text-xs ${isUser ? 'text-blue-200' : 'text-gray-400'} mt-1">${time}</div>
+        <div class="text-xs ${isUser ? 'text-gray-400' : 'text-gray-400'} mt-1">${time}</div>
       </div>
     </div>
   `;
@@ -375,7 +547,7 @@ function updateStreamingMessage(content, slot) {
     <div class="max-w-[90%] bg-gray-100 text-gray-900 rounded-xl px-3 py-2">
       <div class="text-xs prose prose-xs max-w-none">${parsedContent}</div>
       <div class="flex items-center gap-1 mt-1">
-        <span class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
+        <span class="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse"></span>
         <span class="text-xs text-gray-400">...</span>
       </div>
     </div>

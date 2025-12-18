@@ -7,6 +7,7 @@ import { formatFileSize } from '../utils/fileUtils.js';
 import { showPDFViewer } from './PDFViewer.js';
 import { extractTextFromPDF } from '../rag/pdfExtract.js';
 import { createChunksForDocument } from '../rag/chunker.js';
+import { generateNameSuggestions } from '../utils/namingSuggestions.js';
 
 /**
  * Crée le composant de liste des fichiers
@@ -118,15 +119,15 @@ function createFileCard(doc) {
   const actions = document.createElement('div');
   actions.className = 'flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity';
 
-  // Bouton renommer
+  // Bouton renommer avec icône stylo
   const renameBtn = createActionButton('Rename', `
     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
     </svg>
   `, 'text-gray-500 hover:text-blue-600 hover:bg-blue-50');
   renameBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    showRenameInput(doc, filename);
+    showRenameModal(doc);
   });
 
   // Bouton voir
@@ -215,35 +216,117 @@ function createActionButton(title, iconSvg, extraClass = '') {
 }
 
 /**
- * Affiche l'input de renommage
+ * Affiche le modal de renommage avec suggestions
  */
-function showRenameInput(doc, filenameEl) {
+function showRenameModal(doc) {
   const currentName = doc.displayName || doc.filename.replace(/\.pdf$/i, '');
   
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = currentName;
-  input.className = 'text-sm font-semibold text-gray-900 bg-white border-2 border-blue-500 rounded-lg px-2 py-1 w-full focus:outline-none';
+  // Générer les suggestions basées sur le texte extrait
+  const text = doc.extractedText || '';
+  const suggestions = text ? generateNameSuggestions(text, doc.filename) : [];
   
-  const originalText = filenameEl.textContent;
-  filenameEl.textContent = '';
-  filenameEl.appendChild(input);
-  input.focus();
-  input.select();
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+  modal.id = 'rename-modal';
 
-  const save = () => {
-    const newName = input.value.trim();
+  modal.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-100">
+        <h3 class="font-bold text-gray-900 flex items-center gap-2">
+          <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+          Renommer le document
+        </h3>
+        <p class="text-xs text-gray-500 mt-1">${doc.filename}</p>
+      </div>
+
+      <div class="p-6 space-y-4">
+        ${suggestions.length > 0 ? `
+          <div>
+            <p class="text-xs font-medium text-gray-700 mb-2">Suggestions basées sur le contenu :</p>
+            <div class="space-y-2">
+              ${suggestions.map((s, i) => `
+                <label class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-all">
+                  <input type="radio" name="rename-option" value="${s}" class="text-blue-600" ${i === 0 ? 'checked' : ''}>
+                  <span class="text-sm text-gray-900">${s}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+
+        <div class="pt-2 border-t border-gray-100">
+          <p class="text-xs font-medium text-gray-700 mb-2">Ou entrez un nom personnalisé :</p>
+          <input type="text" id="custom-name-input" 
+                 value="" 
+                 placeholder="Tapez votre propre nom ici..."
+                 class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+        </div>
+      </div>
+
+      <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50">
+        <button id="cancel-rename" class="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors">
+          Annuler
+        </button>
+        <button id="apply-rename" class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+          Appliquer
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const customInput = modal.querySelector('#custom-name-input');
+
+  // Quand on tape dans le champ personnalisé, décocher les suggestions
+  customInput.addEventListener('input', () => {
+    const radios = modal.querySelectorAll('input[name="rename-option"]');
+    radios.forEach(r => r.checked = false);
+  });
+
+  const closeModal = () => modal.remove();
+
+  modal.querySelector('#cancel-rename').addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  modal.querySelector('#apply-rename').addEventListener('click', async () => {
+    // Priorité au champ personnalisé s'il est rempli
+    const customValue = customInput.value.trim();
+    let newName;
+    
+    if (customValue) {
+      newName = customValue;
+    } else {
+      const selectedRadio = modal.querySelector('input[name="rename-option"]:checked');
+      newName = selectedRadio ? selectedRadio.value : '';
+    }
+
     if (newName && newName !== currentName) {
       doc.displayName = newName;
+      
+      // Si des chunks existent, rechunker automatiquement
+      const hasChunks = state.chunks.some(c => c.docId === doc.id);
+      if (hasChunks && doc.extractedText) {
+        // Afficher un loader
+        const applyBtn = modal.querySelector('#apply-rename');
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Rechunking...';
+        
+        await handleRechunk(doc.id);
+      }
+      
       window.dispatchEvent(new CustomEvent('state:docUpdated', { detail: { id: doc.id } }));
     }
-    filenameEl.textContent = doc.displayName || doc.filename;
-  };
+    closeModal();
+  });
 
-  input.addEventListener('blur', save);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); save(); }
-    if (e.key === 'Escape') { filenameEl.textContent = originalText; }
+  document.addEventListener('keydown', function handleEscape(e) {
+    if (e.key === 'Escape') {
+      closeModal();
+      document.removeEventListener('keydown', handleEscape);
+    }
   });
 }
 
@@ -261,9 +344,10 @@ async function handleExtraction(docId) {
     const extractionData = await extractTextFromPDF(doc.file);
     updateDocumentExtraction(docId, extractionData);
 
+    const sourceName = doc.displayName || doc.filename;
     const chunks = createChunksForDocument(
       extractionData.text,
-      doc.filename,
+      sourceName,
       docId,
       500,
       1
@@ -277,4 +361,56 @@ async function handleExtraction(docId) {
     updateDocumentStatus(docId, 'error', error.message);
     renderFileList();
   }
+}
+
+/**
+ * Gère le rechunking après renommage + regénération des embeddings
+ */
+async function handleRechunk(docId) {
+  const doc = state.docs.find(d => d.id === docId);
+  if (!doc || !doc.extractedText) return;
+
+  const { addLog, addEmbedding } = await import('../state/state.js');
+  const { generateEmbeddingsForChunks, isModelLoaded, initEmbeddingModel } = await import('../rag/embeddings.js');
+
+  // Supprimer les anciens chunks et embeddings
+  state.chunks = state.chunks.filter(c => c.docId !== docId);
+  state.vectorStore = state.vectorStore.filter(v => v.docId !== docId);
+
+  // Recréer les chunks avec le nouveau nom
+  const sourceName = doc.displayName || doc.filename;
+  const chunks = createChunksForDocument(
+    doc.extractedText,
+    sourceName,
+    docId,
+    500,
+    1
+  );
+
+  addChunks(chunks);
+  addLog('success', `Document rechunké: ${sourceName} (${chunks.length} chunks)`);
+  
+  // Regénérer les embeddings automatiquement
+  try {
+    if (!isModelLoaded()) {
+      addLog('info', 'Chargement du modèle embedding...');
+      await initEmbeddingModel();
+    }
+    
+    addLog('info', `Génération des embeddings pour ${chunks.length} chunks...`);
+    const results = await generateEmbeddingsForChunks(chunks);
+    
+    results.forEach(({ chunkId, vector }) => {
+      addEmbedding(chunkId, vector);
+    });
+    
+    addLog('success', `${results.length} embeddings générés`);
+  } catch (error) {
+    addLog('error', `Échec génération embeddings: ${error.message}`);
+  }
+  
+  window.dispatchEvent(new CustomEvent('state:chunksUpdated'));
+  window.dispatchEvent(new CustomEvent('state:docUpdated', { detail: { id: docId } }));
+  
+  renderFileList();
 }

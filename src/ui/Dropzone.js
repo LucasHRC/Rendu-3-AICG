@@ -2,8 +2,9 @@
  * Composant UI : Zone de drag & drop - Design avec accents couleurs
  */
 
-import { addDocument, addLog } from '../state/state.js';
+import { addLog } from '../state/state.js';
 import { validatePDF } from '../utils/fileUtils.js';
+import { showQuickUploadWorkflow } from './QuickUpload.js';
 
 /**
  * Crée la zone de drag & drop
@@ -64,40 +65,33 @@ export function createDropzone() {
 }
 
 /**
- * Traite les fichiers
+ * Traite les fichiers - lance automatiquement le workflow Quick Upload
  */
 function handleFiles(files, dropzone) {
   if (files.length === 0) return;
 
-  let successCount = 0;
-  let errorCount = 0;
-
+  // Valider tous les fichiers d'abord
+  const validFiles = [];
+  
   files.forEach((file) => {
     const validation = validatePDF(file);
-    
     if (!validation.valid) {
-      errorCount++;
       showError(dropzone, validation.error);
-      return;
-    }
-
-    const result = addDocument(file);
-    if (result.success) {
-      successCount++;
     } else {
-      errorCount++;
-      showError(dropzone, result.error);
+      validFiles.push(file);
     }
   });
 
-  if (successCount > 0) {
-    hideError(dropzone);
-    addLog('success', `${successCount} PDF${successCount > 1 ? 's' : ''} uploaded`);
+  if (validFiles.length === 0) {
+    showError(dropzone, 'Aucun fichier PDF valide');
+    return;
   }
 
-  if (errorCount > 0 && successCount === 0) {
-    showError(dropzone, `Failed to upload ${errorCount} file(s)`);
-  }
+  hideError(dropzone);
+  addLog('info', `${validFiles.length} PDF(s) détecté(s), lancement du workflow...`);
+  
+  // Lancer automatiquement le Quick Upload
+  showQuickUploadWorkflow(validFiles);
 }
 
 function showError(dropzone, message) {

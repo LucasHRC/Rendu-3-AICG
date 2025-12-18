@@ -2,7 +2,7 @@
  * Composant pour l'upload rapide avec workflow automatique guidé
  */
 
-import { state, addDocument, addLog, updateDocumentStatus, updateDocumentExtraction, addChunks, addEmbedding } from '../state/state.js';
+import { state as globalState, addDocument, addLog, updateDocumentStatus, updateDocumentExtraction, addChunks, addEmbedding } from '../state/state.js';
 import { validatePDF } from '../utils/fileUtils.js';
 import { extractTextFromPDF } from '../rag/pdfExtract.js';
 import { createChunksForDocument } from '../rag/chunker.js';
@@ -181,24 +181,21 @@ async function startWorkflow(files, modal) {
     // Débloquer le bouton après
     nextBtn.disabled = false;
     nextBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-
-    // Auto-continuer après un délai si c'est une étape automatique
-    if (['upload', 'extract', 'chunking', 'embeddings'].includes(step.name)) {
-      setTimeout(() => {
-        if (currentStep === stepIndex && stepIndex < workflowSteps.length - 1) {
-          executeStep(stepIndex + 1);
-        }
-      }, 1500);
-    }
   }
 
   // Gestion des boutons
   nextBtn.addEventListener('click', () => {
+    // Si on quitte l'étape de renommage, appliquer les noms
+    if (workflowSteps[currentStep]?.name === 'naming' && workflowState.applyNaming) {
+      workflowState.applyNaming();
+    }
+    
     if (currentStep < workflowSteps.length - 1) {
       executeStep(currentStep + 1);
     } else {
       // Terminer
       modal.remove();
+      window.dispatchEvent(new CustomEvent('state:docUpdated'));
       addLog('success', `Upload rapide terminé : ${workflowState.files.length} documents traités`);
     }
   });
@@ -351,6 +348,33 @@ function showNamingStep(state, content, modal) {
       }
     });
   });
+
+  // Appliquer les renommages quand on quitte cette étape
+  state.applyNaming = () => {
+    state.documents.forEach(doc => {
+      const selectedRadio = modal.querySelector(`input[name="name-${doc.id}"]:checked`);
+      const customInput = modal.querySelector(`#custom-${doc.id}`);
+      
+      let newName;
+      if (selectedRadio) {
+        if (selectedRadio.value === 'custom') {
+          newName = customInput.value.trim();
+        } else {
+          newName = selectedRadio.value;
+        }
+      }
+      
+      if (newName && newName !== doc.filename.replace(/\.pdf$/i, '')) {
+        doc.displayName = newName;
+        // Mettre à jour dans le state global aussi
+        const globalDoc = globalState.docs.find(d => d.id === doc.id);
+        if (globalDoc) {
+          globalDoc.displayName = newName;
+        }
+        addLog('info', `Document renommé: ${doc.filename} → ${newName}`);
+      }
+    });
+  };
 }
 
 /**
@@ -364,7 +388,7 @@ async function showChunkingStep(state, content, modal) {
         ${state.documents.map(doc => `
           <div class="bg-gray-50 p-4 rounded">
             <div class="flex items-center justify-between mb-2">
-              <span class="text-sm font-medium">${doc.filename}</span>
+              <span class="text-sm font-medium">${doc.displayName || doc.filename}</span>
               <div id="chunks-${doc.id}" class="text-xs text-gray-500">Création...</div>
             </div>
             <div class="w-full bg-gray-200 rounded-full h-2">
@@ -382,9 +406,12 @@ async function showChunkingStep(state, content, modal) {
       const extraction = state.extractions.find(e => e.docId === doc.id);
       if (!extraction) continue;
 
+      // Utiliser le displayName si renommé, sinon filename
+      const sourceName = doc.displayName || doc.filename;
+
       const chunks = createChunksForDocument(
         extraction.text,
-        doc.filename,
+        sourceName,
         doc.id,
         500, // chunkSize
         1    // overlapSentences
@@ -396,10 +423,10 @@ async function showChunkingStep(state, content, modal) {
       const chunksCountEl = modal.querySelector(`#chunks-${doc.id}`);
       chunksCountEl.textContent = `${chunks.length} chunks créés`;
 
-      addLog('success', `Chunks créés: ${doc.filename} (${chunks.length} chunks)`);
+      addLog('success', `Chunks créés: ${sourceName} (${chunks.length} chunks)`);
 
     } catch (error) {
-      addLog('error', `Erreur chunking ${doc.filename}: ${error.message}`);
+      addLog('error', `Erreur chunking ${doc.displayName || doc.filename}: ${error.message}`);
       const chunksCountEl = modal.querySelector(`#chunks-${doc.id}`);
       chunksCountEl.textContent = 'Erreur';
       chunksCountEl.style.color = '#ef4444';

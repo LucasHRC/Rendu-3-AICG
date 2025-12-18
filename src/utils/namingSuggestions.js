@@ -11,117 +11,132 @@ import { addLog } from '../state/state.js';
  * @returns {string[]} - Liste des mots-clés
  */
 function extractKeywords(text, maxKeywords = 5) {
-  // Nettoyer et tokenizer le texte
   const words = text
     .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
+    .replace(/[^\w\sàâäéèêëïîôùûüç]/g, ' ')
     .split(/\s+/)
-    .filter(word => word.length > 3) // Mots de plus de 3 caractères
-    .filter(word => !isStopWord(word)); // Exclure les mots vides
+    .filter(word => word.length > 4) // Mots de plus de 4 caractères
+    .filter(word => !isStopWord(word));
 
-  // Compter la fréquence
   const wordCount = {};
   words.forEach(word => {
     wordCount[word] = (wordCount[word] || 0) + 1;
   });
 
-  // Trier par fréquence et retourner les plus fréquents
   return Object.entries(wordCount)
     .sort(([,a], [,b]) => b - a)
     .slice(0, maxKeywords)
-    .map(([word]) => word);
+    .map(([word]) => capitalize(word));
 }
 
 /**
- * Vérifie si un mot est un mot vide (stop word)
- * @param {string} word - Le mot à vérifier
- * @returns {boolean} - true si c'est un stop word
+ * Capitalise la première lettre
+ */
+function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Vérifie si un mot est un stop word (inclut mots académiques génériques)
  */
 function isStopWord(word) {
   const stopWords = new Set([
-    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'has', 'let', 'put', 'say', 'she', 'too', 'use',
-    'dans', 'avec', 'pour', 'sur', 'par', 'des', 'les', 'une', 'qui', 'que', 'est', 'pas', 'plus', 'tout', 'faire', 'fait', 'être', 'deux', 'comme', 'mais', 'nous', 'vous', 'ils', 'leur', 'leurs'
+    // Anglais courant
+    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'did', 'let', 'put', 'say', 'she', 'too', 'use', 'been', 'have', 'this', 'that', 'with', 'from', 'they', 'will', 'would', 'could', 'should', 'which', 'there', 'their', 'what', 'when', 'where', 'about', 'into', 'more', 'some', 'than', 'them', 'then', 'these', 'only', 'other', 'also', 'such', 'very', 'just', 'over', 'most', 'even', 'after', 'before',
+    // Français courant
+    'dans', 'avec', 'pour', 'sur', 'par', 'des', 'les', 'une', 'qui', 'que', 'est', 'pas', 'plus', 'tout', 'faire', 'fait', 'être', 'deux', 'comme', 'mais', 'nous', 'vous', 'ils', 'leur', 'leurs', 'cette', 'sont', 'peut', 'aussi', 'bien', 'sans', 'avoir', 'entre', 'donc', 'autre', 'encore', 'alors', 'tous', 'elle', 'dont',
+    // Mots académiques/génériques à exclure
+    'page', 'pages', 'figure', 'figures', 'table', 'tables', 'section', 'sections', 'chapter', 'chapters', 'abstract', 'introduction', 'conclusion', 'conclusions', 'reference', 'references', 'document', 'documents', 'paper', 'papers', 'journal', 'article', 'articles', 'volume', 'number', 'issue', 'published', 'author', 'authors', 'university', 'research', 'study', 'studies', 'results', 'method', 'methods', 'analysis', 'data', 'based', 'using', 'used', 'show', 'shows', 'shown', 'present', 'presents', 'proposed', 'approach', 'model', 'models', 'system', 'systems', 'process', 'work', 'works', 'first', 'second', 'third', 'however', 'therefore', 'ainsi', 'notamment', 'permet', 'effet', 'partir', 'niveau', 'terme', 'selon', 'travers'
   ]);
   return stopWords.has(word.toLowerCase());
+}
+
+/**
+ * Extrait le sujet depuis l'abstract ou l'introduction
+ */
+function extractFromAbstract(text) {
+  // Chercher après "Abstract" ou "Résumé"
+  const abstractMatch = text.match(/(?:abstract|résumé|summary)[:\s]*([^.]+\.)/i);
+  if (abstractMatch && abstractMatch[1]) {
+    const sentence = abstractMatch[1].trim();
+    if (sentence.length > 20 && sentence.length < 200) {
+      // Extraire les mots-clés de cette phrase
+      const keywords = extractKeywords(sentence, 3);
+      if (keywords.length >= 2) {
+        return keywords.join(' - ');
+      }
+    }
+  }
+  return null;
 }
 
 /**
  * Génère des suggestions de noms pour un document
  * @param {string} text - Le contenu texte du document
  * @param {string} originalName - Le nom original du fichier
- * @returns {string[]} - Liste de 3 suggestions de noms maximum
+ * @returns {string[]} - Liste de 3 suggestions : courte (3 mots), moyenne (4-5 mots), longue (6-7 mots)
  */
 export function generateNameSuggestions(text, originalName) {
   const suggestions = [];
 
   try {
-    // Suggestion 1: Extraire un titre potentiel du début du document
-    const lines = text.split('\n').slice(0, 15); // Premières 15 lignes
-    const titleCandidates = lines.filter(line =>
-      line.length > 15 && // Assez long
-      line.length < 100 && // Pas trop long
-      !line.includes('http') && // Pas d'URL
-      !line.match(/^\d+\./) && // Pas une liste numérotée
-      !line.match(/^[A-Z\s]+:$/) && // Pas un header seul
-      line.split(' ').length > 3 // Au moins 3 mots
-    );
+    const keywords = extractKeywords(text, 8);
+    
+    // Suggestion 1 : Courte (3 mots max)
+    if (keywords.length >= 3) {
+      suggestions.push(keywords.slice(0, 3).join(' '));
+    } else if (keywords.length >= 2) {
+      suggestions.push(keywords.slice(0, 2).join(' '));
+    }
 
-    if (titleCandidates.length > 0) {
-      const titleSuggestion = titleCandidates[0]
-        .replace(/[^\w\s\-_]/g, '') // Nettoyer la ponctuation
-        .trim()
-        .slice(0, 60); // Limiter la longueur
+    // Suggestion 2 : Moyenne (4-5 mots)
+    if (keywords.length >= 5) {
+      suggestions.push(keywords.slice(0, 5).join(' '));
+    } else if (keywords.length >= 4) {
+      suggestions.push(keywords.slice(0, 4).join(' '));
+    }
 
-      if (titleSuggestion.length > 10) {
-        suggestions.push(titleSuggestion);
+    // Suggestion 3 : Longue (6-7 mots) - phrase descriptive
+    const abstractSuggestion = extractFromAbstract(text);
+    if (abstractSuggestion) {
+      // Limiter à 7 mots
+      const words = abstractSuggestion.split(/\s+/).slice(0, 7);
+      suggestions.push(words.join(' '));
+    } else if (keywords.length >= 6) {
+      suggestions.push(keywords.slice(0, 7).join(' '));
+    }
+
+    // Fallback si pas assez de suggestions
+    while (suggestions.length < 3) {
+      const cleanOriginal = originalName
+        .replace(/\.pdf$/i, '')
+        .replace(/[^\w\sàâäéèêëïîôùûüç\-_]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      if (!suggestions.includes(cleanOriginal)) {
+        suggestions.push(cleanOriginal);
+      } else {
+        break;
       }
     }
 
-    // Suggestion 2: Basée sur les mots-clés principaux
-    const keywords = extractKeywords(text, 4);
-    if (keywords.length >= 2) {
-      const keywordSuggestion = keywords.slice(0, 3).join(' - ');
-      if (keywordSuggestion.length > 10 && !suggestions.includes(keywordSuggestion)) {
-        suggestions.push(keywordSuggestion);
-      }
-    }
-
-    // Suggestion 3: Nom original nettoyé (toujours disponible)
-    const cleanOriginal = originalName
-      .replace(/\.pdf$/i, '') // Enlever l'extension
-      .replace(/[^\w\s\-_]/g, ' ') // Nettoyer les caractères spéciaux
-      .replace(/\s+/g, ' ') // Normaliser les espaces
-      .trim()
-      .slice(0, 50); // Limiter la longueur
-
-    if (cleanOriginal && !suggestions.includes(cleanOriginal)) {
-      suggestions.push(cleanOriginal);
-    }
-
-    // S'assurer qu'on a au moins une suggestion
-    if (suggestions.length === 0) {
-      suggestions.push(originalName.replace(/\.pdf$/i, ''));
-    }
-
-    // Limiter à 3 suggestions maximum
-    return suggestions.slice(0, 3);
+    // Dédupliquer et limiter
+    return [...new Set(suggestions)].slice(0, 3);
 
   } catch (error) {
     addLog('warning', `Erreur génération suggestions noms: ${error.message}`);
-    // Fallback: retourner le nom original
     return [originalName.replace(/\.pdf$/i, '')];
   }
 }
 
 /**
  * Nettoie et normalise un nom de fichier
- * @param {string} filename - Le nom de fichier à nettoyer
- * @returns {string} - Le nom nettoyé
  */
 export function cleanFilename(filename) {
   return filename
     .replace(/\.pdf$/i, '')
-    .replace(/[^\w\s\-_]/g, ' ')
+    .replace(/[^\w\sàâäéèêëïîôùûüç\-_]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }

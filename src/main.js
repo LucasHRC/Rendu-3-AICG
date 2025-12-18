@@ -10,7 +10,6 @@ import { createIngestionPanel } from './ui/IngestionPanel.js';
 import { createChatPanel } from './ui/ChatPanel.js';
 import { createSystemControls } from './ui/SystemControls.js';
 import { createHistoryPanel } from './ui/HistoryPanel.js';
-import { showQuickUploadWorkflow } from './ui/QuickUpload.js';
 
 let currentTab = 'documents';
 
@@ -114,17 +113,13 @@ function createDocumentsView(container) {
   const leftColumn = document.createElement('div');
   leftColumn.className = 'w-1/2 flex flex-col gap-3 min-h-0';
   
-  // Section Upload
+  // Section Upload (dropzone lance automatiquement Quick Upload)
   const uploadSection = document.createElement('div');
   uploadSection.className = 'bg-white rounded-xl border border-gray-200 p-4 flex-shrink-0';
   uploadSection.innerHTML = `
-    <div class="flex items-center justify-between mb-3">
+    <div class="mb-3">
       <h2 class="text-sm font-bold text-gray-900">Upload Documents</h2>
-      <label class="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer">
-        Quick Upload
-        <input type="file" id="quick-upload-input" accept=".pdf,application/pdf" multiple 
-               style="position:absolute;left:-9999px;width:1px;height:1px;" />
-      </label>
+      <p class="text-xs text-gray-500 mt-1">Glissez vos PDFs pour lancer le workflow automatique</p>
     </div>
   `;
   uploadSection.appendChild(createDropzone());
@@ -258,16 +253,6 @@ function setupBulkActions() {
     });
   }
 
-  const quickUploadInput = document.getElementById('quick-upload-input');
-  if (quickUploadInput) {
-    quickUploadInput.addEventListener('change', (e) => {
-      const files = e.target.files;
-      if (files && files.length > 0) {
-        showQuickUploadWorkflow(files);
-      }
-      e.target.value = '';
-    });
-  }
 }
 
 /**

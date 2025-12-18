@@ -29,20 +29,28 @@ export function createDropzone() {
   
   const dropzone = container.querySelector('#dropzone');
 
-  // Click to open file dialog via global input
-  dropzone.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const globalInput = document.getElementById('global-file-input');
-    if (globalInput) {
-      // Remove old listener if any, and add new one
-      globalInput.onchange = (evt) => {
-        handleFiles(Array.from(evt.target.files), dropzone);
-        globalInput.value = '';
-      };
-      globalInput.click();
+  // Click handler - use label wrapping input for Chrome compatibility
+  dropzone.setAttribute('onclick', '');
+  
+  const labelWrapper = document.createElement('label');
+  labelWrapper.style.cssText = 'position:absolute;inset:0;cursor:pointer;';
+  
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.pdf,application/pdf';
+  fileInput.multiple = true;
+  fileInput.style.cssText = 'position:absolute;left:-9999px;opacity:0;';
+  
+  fileInput.addEventListener('change', (evt) => {
+    if (evt.target.files?.length > 0) {
+      handleFiles(Array.from(evt.target.files), dropzone);
     }
+    fileInput.value = '';
   });
+  
+  labelWrapper.appendChild(fileInput);
+  dropzone.style.position = 'relative';
+  dropzone.appendChild(labelWrapper);
 
   // Drag events
   dropzone.addEventListener('dragover', (e) => {

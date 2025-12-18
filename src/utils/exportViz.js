@@ -6,7 +6,7 @@ import { addLog } from '../state/state.js';
 import { getHubReport } from '../agents/HubAgent.js';
 import { getAtlasReport } from '../agents/AtlasAgent.js';
 import { getTimelineData } from '../agents/TimelineAgent.js';
-import { getScrollyData } from '../agents/ScrollyAgent.js';
+import { getNarrativeReport } from '../agents/NarrativeAgent.js';
 
 /**
  * Exporte la visualisation courante en PNG
@@ -57,7 +57,7 @@ export function exportToJSON(agentId = null) {
   let data = null;
 
   // Essayer de récupérer les données de chaque agent
-  data = getHubReport() || getAtlasReport() || getTimelineData() || getScrollyData();
+  data = getHubReport() || getAtlasReport() || getTimelineData() || getNarrativeReport();
 
   if (!data) {
     addLog('warning', 'Aucune donnée à exporter');

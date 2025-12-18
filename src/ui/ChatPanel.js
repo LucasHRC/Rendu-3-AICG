@@ -7,6 +7,7 @@ import { initWebLLM, isModelReady, isModelLoading, getLoadedModel, isDualMode, M
 import { getChatHistory, sendMessage, clearChatHistory } from '../llm/chat.js';
 import { parseMarkdown } from '../utils/markdown.js';
 import { setHubContext } from '../agents/HubAgent.js';
+import { showLoadingOverlay, updateLoadingProgress, hideLoadingOverlay } from './LoadingOverlay.js';
 
 let dualModeEnabled = false;
 let currentView = 'chat'; // 'chat' ou 'agent'
@@ -41,11 +42,7 @@ export function createChatPanel() {
     <div class="flex-shrink-0 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 bg-gradient-to-br from-gray-700 to-gray-900 rounded-xl flex items-center justify-center">
-            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-            </svg>
-          </div>
+          <img src="/logo-llm-pdf-rag.avif" alt="Logo" class="w-10 h-10 rounded-xl shadow-sm object-cover" />
           <div>
             <h2 class="text-sm font-bold text-gray-900">AI Research Assistant</h2>
             <p id="chat-mode-label" class="text-xs text-gray-500">Single Model Mode</p>
@@ -395,12 +392,15 @@ async function launchAgent(agentId) {
   if (agentTitle) agentTitle.textContent = AGENT_NAMES[agentId];
   if (agentStatus) agentStatus.textContent = 'Generating...';
 
-  // Show loading
+  // Show loading overlay
+  showLoadingOverlay(`Generation ${AGENT_NAMES[agentId]}`, `${state.docs.length} documents, ${state.chunks.length} chunks`);
+
+  // Show loading in content
   if (agentContent) {
     agentContent.innerHTML = `
       <div class="flex flex-col items-center justify-center h-full text-gray-400">
-        <div class="w-8 h-8 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin mb-4"></div>
-        <p class="text-sm">Generating ${AGENT_NAMES[agentId]}...</p>
+        <img src="/logo-llm-pdf-rag.avif" alt="Logo" class="w-16 h-16 rounded-xl shadow-sm object-cover mb-4 opacity-50" />
+        <p class="text-sm">Generation ${AGENT_NAMES[agentId]}...</p>
       </div>
     `;
   }
@@ -413,8 +413,10 @@ async function launchAgent(agentId) {
       agent: { id: agentId, name: AGENT_NAMES[agentId] },
       onProgress: (pct, text) => {
         if (agentStatus) agentStatus.textContent = text || `${pct}%`;
+        updateLoadingProgress(pct, text || 'Analyse en cours...', `${AGENT_NAMES[agentId]}`);
       },
       onComplete: (data) => {
+        hideLoadingOverlay();
         currentAgentData = { agentId, data, timestamp: new Date() };
         if (agentStatus) agentStatus.textContent = 'Ready';
         
@@ -534,6 +536,7 @@ function setupColumnEvents(slot) {
   
   loadBtn?.addEventListener('click', async () => {
     const modelId = modelSelect.value;
+    const model = MODEL_CATALOG.find(m => m.id === modelId);
     loadBtn.disabled = true;
     loadBtn.textContent = 'Loading...';
     
@@ -542,13 +545,18 @@ function setupColumnEvents(slot) {
     const progressText = document.getElementById(`progress-text-${slot}`);
     
     progress?.classList.remove('hidden');
+    
+    // Afficher overlay
+    showLoadingOverlay('Chargement du modele', model?.name || modelId);
 
     try {
       await initWebLLM(modelId, (pct, text) => {
         if (progressBar) progressBar.style.width = `${pct}%`;
         if (progressText) progressText.textContent = text || `${pct}%`;
+        updateLoadingProgress(pct, text || 'Telechargement...', `${model?.size || '?'} GB`);
       }, slot);
 
+      hideLoadingOverlay();
       progress?.classList.add('hidden');
       loadBtn.textContent = 'Changer';
       loadBtn.disabled = false;
@@ -557,6 +565,7 @@ function setupColumnEvents(slot) {
       updateInputState();
 
     } catch (error) {
+      hideLoadingOverlay();
       progress?.classList.add('hidden');
       loadBtn.disabled = false;
       loadBtn.textContent = 'Retry';
@@ -584,14 +593,10 @@ function updateInputState() {
   if (input) input.disabled = !anyReady;
   if (sendBtn) sendBtn.disabled = !anyReady;
 
-  // Vérifier si un modèle 3B+ est chargé
-  const loadedModel = getLoadedModel('primary') || getLoadedModel('secondary');
-  const is3BPlus = loadedModel && (
-    loadedModel.includes('3B') || 
-    loadedModel.includes('7B') || 
-    loadedModel.includes('Phi') ||
-    loadedModel.includes('Qwen')
-  );
+  // Vérifier si un modèle 3B+ est chargé via le flag agentCompatible
+  const loadedModelId = getLoadedModel('primary') || getLoadedModel('secondary');
+  const loadedModelData = MODEL_CATALOG.find(m => m.id === loadedModelId);
+  const is3BPlus = loadedModelData?.agentCompatible === true;
 
   agentBtns.forEach(btn => {
     btn.disabled = !is3BPlus || state.vectorStore.length === 0;

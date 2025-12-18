@@ -240,3 +240,73 @@ export function prepareKeywordsContext() {
   };
 }
 
+// Patterns pour détecter les phrases assertives (claims)
+const CLAIM_PATTERNS = [
+  /^(?:we|this|the|our|these)\s+(?:show|demonstrate|prove|find|conclude|argue|suggest|propose|confirm|reveal|establish)\s+that\s+(.+)/i,
+  /^(?:it|this)\s+(?:is|was|has been)\s+(?:shown|demonstrated|proven|found|concluded|established)\s+that\s+(.+)/i,
+  /^(?:results|findings|data|evidence|analysis)\s+(?:show|indicate|suggest|demonstrate|reveal|confirm)\s+(?:that\s+)?(.+)/i,
+  /^(?:according to|based on)\s+(?:our|the|this)\s+(?:results|findings|analysis|data),?\s+(.+)/i,
+  /^there\s+is\s+(?:evidence|proof|indication)\s+that\s+(.+)/i,
+  /^(?:nous|cette|les|notre)\s+(?:montrons|démontrons|prouvons|concluons|suggérons|proposons)\s+que\s+(.+)/i,
+  /^(?:il|cela)\s+(?:est|a été)\s+(?:montré|démontré|prouvé|établi)\s+que\s+(.+)/i,
+  /^(?:les résultats|l'analyse|les données)\s+(?:montrent|indiquent|suggèrent|révèlent)\s+que\s+(.+)/i
+];
+
+/**
+ * Extrait les claims (affirmations) d'un texte
+ * @param {string} text - Texte source
+ * @param {number} maxClaims - Nombre max de claims
+ * @returns {string[]} - Liste de claims extraits
+ */
+export function extractClaims(text, maxClaims = 5) {
+  if (!text || typeof text !== 'string') return [];
+
+  const claims = [];
+  
+  // Découper en phrases
+  const sentences = text
+    .replace(/\n+/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .filter(s => s.length >= 30 && s.length <= 300);
+
+  for (const sentence of sentences) {
+    if (claims.length >= maxClaims) break;
+
+    // Vérifier si la phrase correspond à un pattern de claim
+    for (const pattern of CLAIM_PATTERNS) {
+      const match = sentence.match(pattern);
+      if (match) {
+        claims.push(sentence.trim());
+        break;
+      }
+    }
+
+    // Heuristique supplémentaire: phrases avec indicateurs de certitude
+    if (claims.length < maxClaims && !claims.includes(sentence)) {
+      const certaintyIndicators = [
+        'significantly', 'importantly', 'crucially', 'notably',
+        'clearly', 'evidently', 'therefore', 'consequently',
+        'significativement', 'clairement', 'donc', 'par conséquent'
+      ];
+      
+      const lowerSentence = sentence.toLowerCase();
+      if (certaintyIndicators.some(ind => lowerSentence.includes(ind))) {
+        claims.push(sentence.trim());
+      }
+    }
+  }
+
+  return claims.slice(0, maxClaims);
+}
+
+/**
+ * Normalise un texte pour comparaison
+ */
+function normalizeText(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+

@@ -3,11 +3,10 @@
  */
 
 import { addLog } from '../state/state.js';
-import { getHubData } from '../agents/HubAgent.js';
+import { getHubReport } from '../agents/HubAgent.js';
 import { getAtlasData } from '../agents/AtlasAgent.js';
 import { getTimelineData } from '../agents/TimelineAgent.js';
 import { getScrollyData } from '../agents/ScrollyAgent.js';
-import { getSelectedAgentId } from '../ui/AgentSelector.js';
 
 /**
  * Exporte la visualisation courante en PNG
@@ -54,24 +53,11 @@ export function exportToSVG() {
 /**
  * Exporte les données de la visualisation courante en JSON
  */
-export function exportToJSON() {
-  const agentId = getSelectedAgentId();
+export function exportToJSON(agentId = null) {
   let data = null;
 
-  switch (agentId) {
-    case 'hub':
-      data = getHubData();
-      break;
-    case 'atlas':
-      data = getAtlasData();
-      break;
-    case 'timeline':
-      data = getTimelineData();
-      break;
-    case 'scrolly':
-      data = getScrollyData();
-      break;
-  }
+  // Essayer de récupérer les données de chaque agent
+  data = getHubReport() || getAtlasData() || getTimelineData() || getScrollyData();
 
   if (!data) {
     addLog('warning', 'Aucune donnée à exporter');
@@ -82,7 +68,7 @@ export function exportToJSON() {
     const jsonString = JSON.stringify(data, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    downloadFile(url, `${agentId}-data-${Date.now()}.json`);
+    downloadFile(url, `agent-data-${Date.now()}.json`);
     URL.revokeObjectURL(url);
     addLog('success', 'JSON exporté');
   } catch (error) {

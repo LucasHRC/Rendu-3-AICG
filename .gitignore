@@ -26,7 +26,7 @@ npm-debug.log*
 *.swp
 *.swo
 
-# Internal documentation (do not publish)
+# Internal documentation
 CHECKLIST.md
 PROJECT_REQUIREMENTS.md
 PROJECT.md
@@ -34,9 +34,15 @@ Prompt.md
 docs/
 to do.md
 *.todo
+*.plan.md
 
 # Test files
 test-*.html
 
 # Cursor
 .cursor/
+
+# Cache models
+models/
+*.bin
+*.onnx

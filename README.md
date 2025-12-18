@@ -32,7 +32,11 @@ Quatre agents specialises generent des visualisations interactives a partir de v
 | **Narrative** | Presentation scrollytelling animee | GSAP |
 
 ### Hub (Exploration Hub)
-Analyse la couverture de chaque document sur les themes identifies. Affiche une matrice interactive ou l'intensite represente la pertinence.
+Dashboard analytique complet avec 4 onglets :
+- Vue d'ensemble : statistiques globales, metriques qualite, carte de couverture
+- Themes : cards filtrables par type (concept, methode, application, contexte) et statut
+- Affirmations : liste triable avec score de confiance et detection de contradictions
+- Preuves : index des chunks sources avec navigation
 
 ### Atlas (Concept Atlas)
 Cartographie les concepts extraits et leurs connexions. Les noeuds representent les idees, les liens leurs relations semantiques.
@@ -71,18 +75,21 @@ src/
 │   ├── chat.js             # Logique RAG + prompts
 │   └── jsonRepair.js       # Reparation JSON LLM
 ├── agents/
-│   ├── HubAgent.js         # Heatmap coverage
+│   ├── HubAgent.js         # Pipeline analyse + generation rapport
+│   ├── HubReport.js        # Schema donnees + validation
 │   ├── AtlasAgent.js       # Force graph concepts
 │   ├── TimelineAgent.js    # Timeline chronologique
 │   └── ScrollyAgent.js     # Scrollytelling GSAP
 ├── ui/
 │   ├── ChatPanel.js        # Interface chat + agents
+│   ├── HubDashboard.js     # Dashboard multi-onglets Hub
 │   ├── HistoryPanel.js     # Historique conversations
 │   ├── QuickUpload.js      # Workflow upload guide
 │   └── ...
 └── utils/
     ├── markdown.js         # Rendu GFM complet
-    ├── keywordExtract.js   # Extraction mots-cles
+    ├── keywordExtract.js   # Extraction mots-cles + claims
+    ├── contradictionDetect.js # Detection contradictions
     └── exportViz.js        # Export PNG/SVG/JSON
 ```
 

@@ -6,6 +6,7 @@ import { addLog, state } from '../state/state.js';
 import { initWebLLM, isModelReady, isModelLoading, getLoadedModel, isDualMode, MODEL_CATALOG } from '../llm/webllm.js';
 import { getChatHistory, sendMessage, clearChatHistory } from '../llm/chat.js';
 import { parseMarkdown } from '../utils/markdown.js';
+import { setHubContext } from '../agents/HubAgent.js';
 
 let dualModeEnabled = false;
 let currentView = 'chat'; // 'chat' ou 'agent'
@@ -83,26 +84,37 @@ export function createChatPanel() {
       <div id="agent-content" class="flex-1 overflow-auto p-4"></div>
     </div>
 
-    <!-- Agent Mode Selector -->
-    <div class="flex-shrink-0 p-3 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
-      <p class="text-xs font-medium text-gray-500 mb-2">Agents (min. 3B)</p>
-      <div id="agent-mode-selector" class="grid grid-cols-4 gap-2">
-        <button data-agent="hub" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.hub}</span>
-          <span class="text-xs font-medium text-gray-600">Hub</span>
-        </button>
-        <button data-agent="atlas" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.atlas}</span>
-          <span class="text-xs font-medium text-gray-600">Atlas</span>
-        </button>
-        <button data-agent="timeline" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.timeline}</span>
-          <span class="text-xs font-medium text-gray-600">Timeline</span>
-        </button>
-        <button data-agent="scrolly" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-          <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.scrolly}</span>
-          <span class="text-xs font-medium text-gray-600">Narrative</span>
-        </button>
+    <!-- Agent Mode Selector with Context Panel -->
+    <div class="flex-shrink-0 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
+      <!-- Context Input (for Hub agent) -->
+      <div id="hub-context-panel" class="hidden p-3 border-b border-gray-200 bg-white">
+        <p class="text-xs font-medium text-gray-600 mb-2">Analysis Context (optional)</p>
+        <textarea id="hub-context-input" 
+                  class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" 
+                  rows="2" 
+                  placeholder="Describe your analysis objective, focus areas, or specific questions..."></textarea>
+      </div>
+      
+      <div class="p-3">
+        <p class="text-xs font-medium text-gray-500 mb-2">Agents (min. 3B)</p>
+        <div id="agent-mode-selector" class="grid grid-cols-4 gap-2">
+          <button data-agent="hub" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.hub}</span>
+            <span class="text-xs font-medium text-gray-600">Hub</span>
+          </button>
+          <button data-agent="atlas" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.atlas}</span>
+            <span class="text-xs font-medium text-gray-600">Atlas</span>
+          </button>
+          <button data-agent="timeline" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.timeline}</span>
+            <span class="text-xs font-medium text-gray-600">Timeline</span>
+          </button>
+          <button data-agent="scrolly" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
+            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.scrolly}</span>
+            <span class="text-xs font-medium text-gray-600">Narrative</span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -186,7 +198,24 @@ function setupChatEvents(panel) {
   agentBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       const agentId = btn.dataset.agent;
+      
+      // Pass context if Hub agent
+      if (agentId === 'hub') {
+        const contextInput = document.getElementById('hub-context-input');
+        if (contextInput) {
+          setHubContext(contextInput.value.trim());
+        }
+      }
+      
       launchAgent(agentId);
+    });
+
+    // Show context panel on hover for Hub
+    btn.addEventListener('mouseenter', () => {
+      const contextPanel = document.getElementById('hub-context-panel');
+      if (btn.dataset.agent === 'hub' && contextPanel && !btn.disabled) {
+        contextPanel.classList.remove('hidden');
+      }
     });
   });
 
@@ -408,9 +437,9 @@ function setupColumnEvents(slot) {
       }, slot);
 
       progress?.classList.add('hidden');
-      loadBtn.textContent = 'Loaded';
-      loadBtn.className = loadBtn.className.replace(/bg-gray-800/, 'bg-gray-400');
-      modelSelect.disabled = true;
+      loadBtn.textContent = 'Changer';
+      loadBtn.disabled = false;
+      // Ne pas désactiver le select pour permettre de changer de modèle
       updateModelStatus(slot);
       updateInputState();
 

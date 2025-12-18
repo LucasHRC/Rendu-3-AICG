@@ -17,6 +17,7 @@ import './agents/HubAgent.js';
 import './agents/AtlasAgent.js';
 import './agents/TimelineAgent.js';
 import './agents/ScrollyAgent.js';
+import './ui/HubDashboard.js';
 import './utils/exportViz.js';
 
 let currentTab = 'documents';

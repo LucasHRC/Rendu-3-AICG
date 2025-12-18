@@ -452,6 +452,24 @@ export function isImportedMode() {
   return state.importedMode;
 }
 
+/**
+ * Ajoute un message à l'historique de chat
+ * @param {object} message - Message à ajouter
+ */
+export function addChatMessage(message) {
+  const messageWithId = {
+    ...message,
+    id: message.id || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    timestamp: message.timestamp || Date.now()
+  };
+  
+  state.chatHistory.push(messageWithId);
+  
+  window.dispatchEvent(new CustomEvent('state:chatMessageAdded', { detail: messageWithId }));
+  
+  return messageWithId;
+}
+
 // Initialisation
 addLog('info', 'Application initialized');
 

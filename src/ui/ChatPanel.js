@@ -88,11 +88,19 @@ export function createChatPanel() {
     <div class="flex-shrink-0 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
       <!-- Context Input (for Hub agent) -->
       <div id="hub-context-panel" class="hidden p-3 border-b border-gray-200 bg-white">
-        <p class="text-xs font-medium text-gray-600 mb-2">Analysis Context (optional)</p>
+        <p class="text-xs font-medium text-gray-600 mb-2">Contexte d'analyse (optionnel)</p>
         <textarea id="hub-context-input" 
                   class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" 
                   rows="2" 
-                  placeholder="Describe your analysis objective, focus areas, or specific questions..."></textarea>
+                  placeholder="Décrivez l'objectif de votre analyse, les angles à privilégier ou les questions spécifiques..."></textarea>
+      </div>
+      <!-- Context Input (for Atlas agent) -->
+      <div id="atlas-context-panel" class="hidden p-3 border-b border-gray-200 bg-white">
+        <p class="text-xs font-medium text-gray-600 mb-2">Contexte du graphe (optionnel)</p>
+        <textarea id="atlas-context-input" 
+                  class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" 
+                  rows="2" 
+                  placeholder="Précisez le domaine d'étude, les concepts clés à privilégier ou les relations à explorer..."></textarea>
       </div>
       
       <div class="p-3">
@@ -210,11 +218,18 @@ function setupChatEvents(panel) {
       launchAgent(agentId);
     });
 
-    // Show context panel on hover for Hub
+    // Show context panel on hover for Hub and Atlas
     btn.addEventListener('mouseenter', () => {
-      const contextPanel = document.getElementById('hub-context-panel');
-      if (btn.dataset.agent === 'hub' && contextPanel && !btn.disabled) {
-        contextPanel.classList.remove('hidden');
+      const agentId = btn.dataset.agent;
+      const hubPanel = document.getElementById('hub-context-panel');
+      const atlasPanel = document.getElementById('atlas-context-panel');
+      
+      if (agentId === 'hub' && hubPanel && !btn.disabled) {
+        hubPanel.classList.remove('hidden');
+        atlasPanel?.classList.add('hidden');
+      } else if (agentId === 'atlas' && atlasPanel && !btn.disabled) {
+        atlasPanel.classList.remove('hidden');
+        hubPanel?.classList.add('hidden');
       }
     });
   });

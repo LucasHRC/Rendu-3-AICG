@@ -9,6 +9,7 @@ import { createFileList } from './ui/FileList.js';
 import { createIngestionPanel } from './ui/IngestionPanel.js';
 import { createChatPanel } from './ui/ChatPanel.js';
 import { createSystemControls } from './ui/SystemControls.js';
+import { createHistoryPanel } from './ui/HistoryPanel.js';
 import { showQuickUploadWorkflow } from './ui/QuickUpload.js';
 
 let currentTab = 'documents';
@@ -196,6 +197,9 @@ function createChatView(container) {
     </div>
   `;
   rightColumn.appendChild(ragStatus);
+  
+  // Historique des conversations
+  rightColumn.appendChild(createHistoryPanel());
   
   view.appendChild(leftColumn);
   view.appendChild(rightColumn);

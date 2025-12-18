@@ -366,17 +366,22 @@ export function addEmbedding(chunkId, vector) {
     return false;
   }
 
+  // Créer l'entrée conforme au spec (text, embedding, source)
+  const entry = {
+    chunkId,
+    vector,
+    text: chunk.text,         // Conforme spec: texte brut
+    embedding: vector,        // Conforme spec: alias pour vector
+    source: chunk.source,
+    docId: chunk.docId
+  };
+
   // Vérifier si l'embedding existe déjà
   const existingIndex = state.vectorStore.findIndex(v => v.chunkId === chunkId);
   if (existingIndex !== -1) {
-    state.vectorStore[existingIndex].vector = vector;
+    state.vectorStore[existingIndex] = entry;
   } else {
-    state.vectorStore.push({
-      chunkId,
-      vector,
-      source: chunk.source,
-      docId: chunk.docId
-    });
+    state.vectorStore.push(entry);
   }
 
   // Émission d'événement

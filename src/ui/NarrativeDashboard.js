@@ -1076,12 +1076,11 @@ async function loadSummarizerHandler() {
   const progressBar = document.getElementById('summarizer-progress-bar');
   const progressText = document.getElementById('summarizer-progress-text');
 
-  const info = getSummarizerInfo();
-  
   if (btn) btn.disabled = true;
   progress?.classList.remove('hidden');
   
-  showLoadingOverlay('Chargement Summarizer', `Llama 3.2 3B (${info.size})`);
+  const info = getSummarizerInfo();
+  showLoadingOverlay('Chargement Summarizer', `${info.name} (${info.size})`);
 
   try {
     await initSummarizer((pct, text) => {
@@ -1195,8 +1194,9 @@ async function generateSummaryHandler() {
   try {
     let content = '';
     let context = {};
-    let evidence = [];
 
+    let evidence = [];
+    
     if (summaryContext?.type === 'node') {
       content = summaryContext.node.evidence?.map(e => e.excerpt).join('\n\n') || summaryContext.node.summary || '';
       evidence = summaryContext.node.evidence || [];
@@ -1233,7 +1233,6 @@ async function generateSummaryHandler() {
     
     await generateSummary(content, context, (delta, full) => {
       currentSummary = full;
-      // Formatter avec references cliquables
       if (textEl) textEl.innerHTML = formatSummaryWithRefs(full, evidence);
     });
 
@@ -1241,7 +1240,7 @@ async function generateSummaryHandler() {
     result?.classList.remove('hidden');
     
     // Setup click handlers pour references
-    setupRefClickHandlers();
+    setupRefClickHandlers(evidence);
 
   } catch (error) {
     addLog('error', `Erreur generation resume: ${error.message}`);
@@ -1259,21 +1258,22 @@ function formatSummaryWithRefs(text, evidence) {
     const idx = parseInt(num) - 1;
     const ref = evidence[idx];
     if (ref) {
-      return `<span class="ref-link cursor-pointer text-blue-600 hover:text-blue-800 hover:underline" data-ref-idx="${idx}" title="${ref.doc_title}: ${ref.excerpt?.substring(0, 100)}...">[${num}]</span>`;
+      const excerpt = ref.excerpt?.substring(0, 80) || '';
+      return `<span class="ref-link cursor-pointer text-blue-600 hover:text-blue-800 hover:underline font-medium" data-ref-idx="${idx}" title="${ref.doc_title}: ${excerpt}...">[${num}]</span>`;
     }
     return match;
   });
 
-  // Formatter les sections en gras
-  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-gray-900">$1</strong>');
+  // Formatter les sections en gras (**text**)
+  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-gray-900 font-semibold">$1</strong>');
   
-  // Formatter les listes
-  formatted = formatted.replace(/^- (.+)$/gm, '<li class="ml-4 text-gray-700">$1</li>');
-  formatted = formatted.replace(/(<li[^>]*>.*<\/li>\n?)+/g, '<ul class="list-disc my-2">$&</ul>');
+  // Formatter les listes a puces
+  formatted = formatted.replace(/^- (.+)$/gm, '<li class="ml-4 text-gray-700 mb-1">$1</li>');
+  formatted = formatted.replace(/(<li[^>]*>.*<\/li>\n?)+/g, '<ul class="list-disc my-2 pl-2">$&</ul>');
   
   // Paragraphes
-  formatted = formatted.replace(/\n\n/g, '</p><p class="my-2">');
-  formatted = `<p class="my-2">${formatted}</p>`;
+  formatted = formatted.replace(/\n\n/g, '</p><p class="my-2 text-gray-700 leading-relaxed">');
+  formatted = `<p class="my-2 text-gray-700 leading-relaxed">${formatted}</p>`;
 
   return formatted;
 }
@@ -1281,28 +1281,19 @@ function formatSummaryWithRefs(text, evidence) {
 /**
  * Setup click handlers pour les references
  */
-function setupRefClickHandlers() {
-  document.querySelectorAll('.ref-link').forEach(el => {
-    el.addEventListener('click', () => {
-      const idx = parseInt(el.dataset.refIdx);
-      let evidence = [];
-      
-      if (summaryContext?.type === 'node') {
-        evidence = summaryContext.node.evidence || [];
-      } else if (summaryContext?.type === 'document') {
-        evidence = summaryContext.doc.doc_summary.key_points.flatMap(kp => kp.evidence || []);
-      } else {
-        evidence = currentReport?.documents.flatMap(d => 
-          d.doc_summary.key_points.flatMap(kp => kp.evidence || [])
-        ) || [];
-      }
-      
-      const ref = evidence[idx];
-      if (ref) {
-        showRefTooltip(el, ref);
-      }
+function setupRefClickHandlers(evidence) {
+  setTimeout(() => {
+    document.querySelectorAll('.ref-link').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(el.dataset.refIdx);
+        const ref = evidence[idx];
+        if (ref) {
+          showRefTooltip(el, ref);
+        }
+      });
     });
-  });
+  }, 100);
 }
 
 /**
@@ -1314,23 +1305,31 @@ function showRefTooltip(element, ref) {
   
   const tooltip = document.createElement('div');
   tooltip.id = 'ref-tooltip';
-  tooltip.className = 'fixed z-50 max-w-md p-4 bg-gray-900 text-white text-sm rounded-lg shadow-xl';
+  tooltip.className = 'fixed z-[9999] max-w-md p-4 bg-gray-900 text-white text-sm rounded-lg shadow-2xl border border-gray-700';
   tooltip.innerHTML = `
-    <div class="font-bold text-blue-300 mb-2">${ref.doc_title || 'Source'}</div>
-    <p class="text-gray-300 leading-relaxed">"${ref.excerpt}"</p>
-    <button class="mt-3 text-xs text-blue-400 hover:text-blue-300" onclick="navigator.clipboard.writeText('${ref.excerpt?.replace(/'/g, "\\'")}'); this.textContent='Copie!'">
-      Copier l'extrait
-    </button>
-    <button class="ml-3 text-xs text-gray-400 hover:text-gray-300" onclick="this.closest('#ref-tooltip').remove()">
-      Fermer
-    </button>
+    <div class="flex items-center justify-between mb-2">
+      <span class="font-bold text-blue-300">${ref.doc_title || 'Source'}</span>
+      <button class="text-gray-400 hover:text-white text-lg" onclick="this.closest('#ref-tooltip').remove()">&times;</button>
+    </div>
+    <p class="text-gray-300 leading-relaxed text-xs border-l-2 border-blue-500 pl-3 italic">"${ref.excerpt}"</p>
+    <div class="flex gap-2 mt-3">
+      <button class="copy-ref-btn text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded">
+        Copier
+      </button>
+    </div>
   `;
   
   const rect = element.getBoundingClientRect();
-  tooltip.style.left = `${Math.min(rect.left, window.innerWidth - 350)}px`;
+  tooltip.style.left = `${Math.min(rect.left, window.innerWidth - 380)}px`;
   tooltip.style.top = `${rect.bottom + 8}px`;
   
   document.body.appendChild(tooltip);
+  
+  // Copier
+  tooltip.querySelector('.copy-ref-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(ref.excerpt || '');
+    tooltip.querySelector('.copy-ref-btn').textContent = 'Copie!';
+  });
   
   // Fermer au clic ailleurs
   setTimeout(() => {

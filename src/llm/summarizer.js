@@ -12,6 +12,19 @@ let isLoading = false;
 let isReady = false;
 
 /**
+ * Info sur le summarizer
+ */
+export function getSummarizerInfo() {
+  return {
+    model: SUMMARIZER_MODEL,
+    name: 'Llama 3.2 3B',
+    size: SUMMARIZER_SIZE,
+    isReady,
+    isLoading
+  };
+}
+
+/**
  * Charge le LLM summarizer
  */
 export async function initSummarizer(onProgress = () => {}) {
@@ -31,7 +44,7 @@ export async function initSummarizer(onProgress = () => {}) {
   }
 
   isLoading = true;
-  addLog('info', 'Chargement du summarizer (Llama 3B)...');
+  addLog('info', `Chargement du summarizer (Llama 3B - ${SUMMARIZER_SIZE})...`);
 
   try {
     let attempts = 0;
@@ -55,7 +68,7 @@ export async function initSummarizer(onProgress = () => {}) {
     isReady = true;
     
     window.dispatchEvent(new CustomEvent('summarizer:ready'));
-    addLog('success', 'Summarizer pret (Llama 3B)');
+    addLog('success', `Summarizer pret (Llama 3B - ${SUMMARIZER_SIZE})`);
     
     return true;
 
@@ -66,22 +79,24 @@ export async function initSummarizer(onProgress = () => {}) {
   }
 }
 
-export function getSummarizerInfo() {
-  return { model: SUMMARIZER_MODEL, size: SUMMARIZER_SIZE };
-}
-
+/**
+ * Verifie si le summarizer est pret
+ */
 export function isSummarizerReady() {
   return isReady;
 }
 
+/**
+ * Verifie si le summarizer est en chargement
+ */
 export function isSummarizerLoading() {
   return isLoading;
 }
 
 /**
- * Genere un resume structure avec references
+ * Genere un resume contextuel avec references
  * @param {string} content - Contenu a resumer
- * @param {Object} context - Contexte (titre, niveau, type, evidence)
+ * @param {Object} context - Contexte (titre, niveau, evidence)
  * @param {Function} onToken - Callback streaming
  */
 export async function generateSummary(content, context = {}, onToken = () => {}) {
@@ -91,52 +106,35 @@ export async function generateSummary(content, context = {}, onToken = () => {})
 
   const { title = '', level = 'section', docTitle = '', evidence = [] } = context;
 
-  // Prompt ameliore pour resumes structures avec comprehension
-  const systemPrompt = `Tu es un expert en analyse documentaire. Tu produis des resumes:
-
-STRUCTURE:
-- Commence par identifier le TYPE de document (article, rapport, these, etc.)
-- Explique le SUJET principal en 1-2 phrases
-- Liste les POINTS CLES (3-5 max) avec puces
-- Indique les CONCLUSIONS ou implications
-
-STYLE:
-- Langage clair et accessible
-- Phrases courtes et directes
-- Pas de jargon inutile
-- Commence par l'essentiel
-
-REFERENCES:
-- Cite les sources avec [Ref:X] ou X est le numero de la source
-- Les references doivent pointer vers des passages precis
-
-FORMAT DE SORTIE:
-**Type:** [type de document]
-**Sujet:** [description en 1-2 phrases]
-
-**Points cles:**
-- Point 1 [Ref:1]
-- Point 2 [Ref:2]
-- ...
-
-**Conclusion:** [implication ou synthese]`;
-
-  // Construire le contexte avec references numerotees
-  let contentWithRefs = content.substring(0, 3000);
-  let refList = '';
-  
+  // Construire les references si disponibles
+  let refsContext = '';
   if (evidence.length > 0) {
-    refList = '\n\nSOURCES:\n' + evidence.slice(0, 5).map((e, i) => 
-      `[${i + 1}] ${e.doc_title || 'Document'}: "${e.excerpt?.substring(0, 100)}..."`
+    refsContext = '\n\nSources disponibles:\n' + evidence.slice(0, 5).map((e, i) => 
+      `[Ref:${i + 1}] "${e.excerpt?.substring(0, 150)}..." (${e.doc_title || 'Source'})`
     ).join('\n');
-    contentWithRefs += refList;
   }
 
-  const userPrompt = `Analyse et resume ce contenu${title ? ` (${title})` : ''}${docTitle ? ` du document "${docTitle}"` : ''}:
+  // Prompt optimise pour resumes structures avec comprehension
+  const systemPrompt = `Tu es un expert en analyse documentaire. Tu produis des resumes qui:
 
-${contentWithRefs}
+1. **EXPLIQUENT** de quoi traite le document/section (sujet, domaine, objectif)
+2. **SYNTHETISENT** les points cles de maniere structuree
+3. **CITENT** les sources avec [Ref:N] quand des references sont fournies
+4. **INTERPRETENT** ce que cela implique ou signifie
 
-Resume structure (${level === 'document' ? 'complet' : 'concis'}):`;
+Format attendu:
+- **Sujet**: Une phrase qui explique clairement de quoi il s'agit
+- **Points cles**: Liste a puces des elements importants
+- **Implications**: Ce que cela signifie ou suggere
+
+Utilise les references [Ref:N] pour appuyer tes affirmations.
+Sois concis mais informatif. Pas de phrases creuses.`;
+
+  const userPrompt = `Analyse et resume${title ? ` "${title}"` : ''}${docTitle ? ` du document "${docTitle}"` : ''}:
+
+${content.substring(0, 3000)}${refsContext}
+
+Produis un resume structure (${level === 'document' ? '8-12 lignes' : '5-8 lignes'}):`;
 
   let fullResponse = '';
 
@@ -174,8 +172,8 @@ Resume structure (${level === 'document' ? 'complet' : 'concis'}):`;
 export async function summarizeDocument(doc, chunks, onToken = () => {}) {
   const content = chunks.map(c => c.text).join('\n\n').substring(0, 4000);
   const evidence = chunks.slice(0, 5).map(c => ({
+    excerpt: c.text.substring(0, 200),
     doc_title: doc.displayName || doc.filename,
-    excerpt: c.text.substring(0, 150),
     chunk_id: c.id
   }));
   

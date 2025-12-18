@@ -1,5 +1,5 @@
 /**
- * Quick Upload - Workflow automatique avec overlay de chargement
+ * Quick Upload - Workflow automatique avec overlay unifié
  */
 
 import { state as globalState, addDocument, addLog, updateDocumentStatus, updateDocumentExtraction, addChunks, addEmbedding } from '../state/state.js';
@@ -11,7 +11,8 @@ import { initEmbeddingModel, generateEmbeddingsForChunks, isModelLoaded } from '
 import { showLoadingOverlay, updateLoadingProgress, hideLoadingOverlay } from './LoadingOverlay.js';
 
 /**
- * Lance le workflow d'upload rapide avec overlay
+ * Lance le workflow d'upload rapide avec overlay unifié
+ * @param {FileList} files - Les fichiers sélectionnés
  */
 export async function showQuickUploadWorkflow(files) {
   const validFiles = Array.from(files).filter(f => validatePDF(f).valid);
@@ -21,10 +22,8 @@ export async function showQuickUploadWorkflow(files) {
     return;
   }
 
-  addLog('info', `Demarrage upload rapide: ${validFiles.length} fichier(s)`);
-  
-  // Afficher overlay
-  showLoadingOverlay('Upload Rapide', `${validFiles.length} document(s)`);
+  const totalSteps = 4; // Upload, Extract, Chunk, Embed
+  let currentStep = 0;
 
   const state = {
     files: validFiles,
@@ -35,92 +34,101 @@ export async function showQuickUploadWorkflow(files) {
   };
 
   try {
-    // Etape 1: Enregistrement des documents
-    updateLoadingProgress(5, 'Enregistrement des documents...', `${validFiles.length} fichiers`);
+    // === ETAPE 1: Enregistrement ===
+    currentStep = 1;
+    showLoadingOverlay('Upload Rapide', `${validFiles.length} document(s)`);
+    updateLoadingProgress(5, 'Enregistrement des documents...', 'Etape 1/4');
     
     for (const file of validFiles) {
-      const doc = {
-        id: `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        filename: file.name,
-        displayName: file.name.replace(/\.pdf$/i, ''),
-        file: file,
-        size: file.size,
-        status: 'pending',
-        uploadedAt: new Date().toISOString()
-      };
-      
-      addDocument(doc);
-      state.documents.push(doc);
+      const result = addDocument(file);
+      if (result.success) {
+        state.documents.push(result.doc);
+      }
     }
+    
+    addLog('info', `${state.documents.length} documents enregistres`);
+    await sleep(300);
 
-    // Etape 2: Extraction PDF
-    updateLoadingProgress(10, 'Extraction du texte...', 'Analyse des PDFs');
+    // === ETAPE 2: Extraction PDF ===
+    currentStep = 2;
+    updateLoadingProgress(15, 'Extraction du texte...', 'Etape 2/4');
     
     for (let i = 0; i < state.documents.length; i++) {
       const doc = state.documents[i];
-      const pct = 10 + ((i / state.documents.length) * 25);
+      const progress = 15 + ((i / state.documents.length) * 25);
       
-      updateLoadingProgress(pct, `Extraction: ${doc.filename}`, `Document ${i + 1}/${state.documents.length}`);
+      updateLoadingProgress(progress, `Extraction: ${doc.filename}`, `Document ${i + 1}/${state.documents.length}`);
       updateDocumentStatus(doc.id, 'extracting');
 
       try {
         const extractionData = await extractTextFromPDF(doc.file);
         updateDocumentExtraction(doc.id, extractionData);
         state.extractions.push({ docId: doc.id, ...extractionData });
-        
-        // Generer suggestions de nom
+
+        // Auto-renommage avec suggestion
         const suggestions = generateNameSuggestions(extractionData.text, doc.filename);
         if (suggestions.length > 0 && suggestions[0] !== doc.displayName) {
           doc.displayName = suggestions[0];
-          // Update in global state
           const globalDoc = globalState.docs.find(d => d.id === doc.id);
           if (globalDoc) globalDoc.displayName = suggestions[0];
         }
-        
+
         addLog('success', `Extrait: ${doc.filename} (${extractionData.pages} pages)`);
       } catch (error) {
         addLog('error', `Erreur extraction ${doc.filename}: ${error.message}`);
       }
     }
 
-    // Etape 3: Chunking
-    updateLoadingProgress(40, 'Decoupage en chunks...', 'Segmentation semantique');
+    // === ETAPE 3: Chunking ===
+    currentStep = 3;
+    updateLoadingProgress(45, 'Decoupage en chunks...', 'Etape 3/4');
     
     for (let i = 0; i < state.documents.length; i++) {
       const doc = state.documents[i];
       const extraction = state.extractions.find(e => e.docId === doc.id);
-      
       if (!extraction) continue;
-      
-      const pct = 40 + ((i / state.documents.length) * 20);
-      updateLoadingProgress(pct, `Chunking: ${doc.displayName}`, `Document ${i + 1}/${state.documents.length}`);
 
-      const docChunks = createChunksForDocument(doc.id, extraction.text, {
-        chunkSize: globalState.settings.chunkSize || 500,
-        overlap: globalState.settings.overlap || 50,
-        source: doc.displayName
-      });
+      const progress = 45 + ((i / state.documents.length) * 15);
+      updateLoadingProgress(progress, `Chunking: ${doc.displayName || doc.filename}`, `Document ${i + 1}/${state.documents.length}`);
 
-      addChunks(docChunks);
-      state.chunks.push(...docChunks);
-      
-      addLog('info', `${docChunks.length} chunks crees pour ${doc.displayName}`);
+      try {
+        const sourceName = doc.displayName || doc.filename;
+        const chunks = createChunksForDocument(
+          extraction.text,
+          sourceName,
+          doc.id,
+          500,
+          1
+        );
+
+        addChunks(chunks);
+        state.chunks.push(...chunks);
+        addLog('info', `${chunks.length} chunks crees pour ${sourceName}`);
+      } catch (error) {
+        addLog('error', `Erreur chunking ${doc.filename}: ${error.message}`);
+      }
     }
 
-    // Etape 4: Embeddings
-    updateLoadingProgress(65, 'Generation des embeddings...', 'Chargement du modele');
-    
+    // === ETAPE 4: Embeddings ===
+    currentStep = 4;
+    updateLoadingProgress(60, 'Generation des embeddings...', 'Etape 4/4');
+
+    // Charger le modele si necessaire
     if (!isModelLoaded()) {
+      updateLoadingProgress(62, 'Chargement modele embeddings...', 'Xenova/all-MiniLM-L6-v2');
+      
       await initEmbeddingModel((pct) => {
-        updateLoadingProgress(65 + (pct * 0.15), 'Chargement modele embeddings...', 'Xenova/all-MiniLM-L6-v2');
+        const progress = 62 + (pct * 0.15);
+        updateLoadingProgress(progress, 'Chargement modele embeddings...', `${pct}%`);
       });
     }
 
-    updateLoadingProgress(80, 'Vectorisation...', `${state.chunks.length} chunks`);
+    // Generer les embeddings
+    updateLoadingProgress(78, 'Generation des vecteurs...', `${state.chunks.length} chunks`);
     
     const results = await generateEmbeddingsForChunks(state.chunks, (current, total) => {
-      const pct = 80 + ((current / total) * 18);
-      updateLoadingProgress(pct, `Embedding ${current}/${total}`, state.chunks[current - 1]?.text.substring(0, 40) + '...');
+      const progress = 78 + ((current / total) * 20);
+      updateLoadingProgress(progress, `Embedding ${current}/${total}`, state.chunks[current - 1]?.text.substring(0, 40) + '...');
     });
 
     // Stocker les embeddings
@@ -129,16 +137,16 @@ export async function showQuickUploadWorkflow(files) {
     });
     state.embeddings = results;
 
-    // Termine
+    // === TERMINE ===
     updateLoadingProgress(100, 'Termine!', `${state.documents.length} docs, ${state.chunks.length} chunks, ${results.length} embeddings`);
+    await sleep(800);
+    
+    hideLoadingOverlay();
     
     addLog('success', `Upload rapide termine: ${state.documents.length} documents, ${state.chunks.length} chunks, ${results.length} embeddings`);
 
-    // Attendre un peu avant de fermer
-    await new Promise(r => setTimeout(r, 1000));
-    hideLoadingOverlay();
-
     // Rafraichir l'UI
+    window.dispatchEvent(new CustomEvent('state:docUpdated'));
     window.dispatchEvent(new CustomEvent('documents:updated'));
     window.dispatchEvent(new CustomEvent('chunks:updated'));
     window.dispatchEvent(new CustomEvent('embeddings:updated'));
@@ -147,4 +155,11 @@ export async function showQuickUploadWorkflow(files) {
     hideLoadingOverlay();
     addLog('error', `Erreur upload rapide: ${error.message}`);
   }
+}
+
+/**
+ * Utilitaire sleep
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

@@ -47,6 +47,20 @@ Visualise l'evolution temporelle des publications et concepts. Permet d'identifi
 ### Narrative (Scrollytelling)
 Genere une narration guidee par le scroll. Presente les insights cles avec transitions animees.
 
+## Selection de Modeles
+
+Le selecteur de modeles affiche 10 modeles tries par score global. Chaque modele est evalue sur 5 criteres :
+
+| Critere | Description | Type |
+|---------|-------------|------|
+| Qualite | Precision et pertinence des reponses | Positif |
+| Coherence | Consistance logique du raisonnement | Positif |
+| Agentic | Capacite a suivre des instructions complexes | Positif |
+| Latence | Vitesse d'inference (inverse) | Negatif |
+| Contexte | Taille de fenetre contextuelle (inverse) | Negatif |
+
+Les modeles compatibles avec les agents (3B+) affichent un badge. Au survol, les 5 criteres detailles apparaissent avec barres de progression colorees.
+
 ## Stack Technique
 
 | Composant | Technologie |
@@ -56,7 +70,7 @@ Genere une narration guidee par le scroll. Presente les insights cles avec trans
 | Style | Tailwind CSS |
 | PDF | PDF.js |
 | Embeddings | Transformers.js (all-MiniLM-L6-v2) |
-| LLM | WebLLM (Llama 3.2, Qwen, Phi, Mistral) |
+| LLM | WebLLM (Llama 3.1/3.2, Qwen 2.5, Phi 3.5, Mistral 7B, DeepSeek R1, Hermes 3) |
 | Visualisation | D3.js, GSAP |
 
 ## Architecture

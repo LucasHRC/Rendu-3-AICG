@@ -3,7 +3,7 @@
  */
 
 import { addLog, state } from '../state/state.js';
-import { initWebLLM, isModelReady, isModelLoading, getLoadedModel, isDualMode, MODEL_CATALOG } from '../llm/webllm.js';
+import { initWebLLM, isModelReady, isModelLoading, getLoadedModel, isDualMode, MODEL_CATALOG, calculateTotalScore, getScoreColor, getSortedModels } from '../llm/webllm.js';
 import { getChatHistory, sendMessage, clearChatHistory } from '../llm/chat.js';
 import { parseMarkdown } from '../utils/markdown.js';
 import { setHubContext } from '../agents/HubAgent.js';
@@ -26,6 +26,7 @@ const AGENT_NAMES = {
   timeline: 'Timeline',
   scrolly: 'Narrative'
 };
+
 
 /**
  * Cree le panel de chat
@@ -152,23 +153,89 @@ export function createChatPanel() {
 
 function createChatColumn(slot) {
   const isPrimary = slot === 'primary';
+  const sortedModels = getSortedModels();
+  const defaultModel = sortedModels[0];
   
   return `
     <div id="chat-column-${slot}" class="flex-1 flex flex-col min-h-0 border border-gray-200 rounded-xl overflow-hidden">
       <!-- Column header with model selector -->
       <div class="flex-shrink-0 px-3 py-2 bg-gray-50 border-b border-gray-100">
         <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-bold text-gray-700">${isPrimary ? 'Model A' : 'Model B'}</span>
-          <span id="model-status-${slot}" class="text-xs text-gray-500">Not loaded</span>
+          <span class="text-xs font-bold text-gray-700">${isPrimary ? 'Modèle' : 'Modèle B'}</span>
+          <span id="model-status-${slot}" class="text-xs text-gray-500">Non chargé</span>
         </div>
         <div class="flex gap-2">
-          <select id="model-select-${slot}" class="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white">
-            ${MODEL_CATALOG.map(m => `
-              <option value="${m.id}">${m.name} (${m.size})</option>
-            `).join('')}
-          </select>
+          <!-- Custom dropdown -->
+          <div class="relative flex-1">
+            <input type="hidden" id="model-select-${slot}" value="${defaultModel.id}">
+            <button id="model-dropdown-btn-${slot}" class="w-full px-3 py-2 text-xs text-left border border-gray-200 rounded-lg bg-white hover:bg-gray-50 flex items-center justify-between">
+              <span id="model-dropdown-label-${slot}">${defaultModel.recommended ? '★ ' : ''}${defaultModel.name}</span>
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            <!-- Dropdown menu -->
+            <div id="model-dropdown-menu-${slot}" class="hidden absolute z-50 w-80 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-96 overflow-y-auto">
+              ${sortedModels.map(m => {
+                const score = calculateTotalScore(m.scores);
+                const scoreColor = getScoreColor(score);
+                return `
+                <div class="model-option group" data-model-id="${m.id}">
+                  <div class="px-3 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0 transition-all" data-model-id="${m.id}">
+                    <!-- Header: Nom + Score -->
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        ${m.recommended ? '<span class="text-yellow-500">★</span>' : ''}
+                        <span class="text-sm font-semibold text-gray-800">${m.name}</span>
+                        ${m.agentCompatible ? '<span class="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">🤖 Agents</span>' : ''}
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-lg font-bold" style="color: ${scoreColor}">${score.toFixed(1)}</span>
+                        <span class="text-xs text-gray-400">/10</span>
+                      </div>
+                    </div>
+                    <!-- Infos: Taille + Params -->
+                    <div class="flex items-center gap-3 mb-2 text-xs text-gray-500">
+                      <span>📦 ${m.size} GB</span>
+                      <span>⚙️ ${m.params}</span>
+                    </div>
+                    <!-- Barre globale -->
+                    <div class="w-full h-2 bg-gray-200 rounded-full overflow-hidden mb-2">
+                      <div class="h-full rounded-full transition-all" style="width: ${score * 10}%; background-color: ${scoreColor}"></div>
+                    </div>
+                    <!-- 5 critères détaillés (hidden par défaut, visible au hover) -->
+                    <div class="model-specs hidden group-hover:grid grid-cols-5 gap-1 pt-2 border-t border-gray-100">
+                      <div class="text-center">
+                        <div class="text-[9px] text-gray-400 mb-1">Qualité</div>
+                        <div class="w-full h-1.5 bg-gray-200 rounded-full"><div class="h-full bg-green-500 rounded-full" style="width: ${m.scores.quality * 50}%"></div></div>
+                        <div class="text-[10px] font-medium text-gray-600 mt-0.5">${m.scores.quality.toFixed(1)}</div>
+                      </div>
+                      <div class="text-center">
+                        <div class="text-[9px] text-gray-400 mb-1">Cohérence</div>
+                        <div class="w-full h-1.5 bg-gray-200 rounded-full"><div class="h-full bg-blue-500 rounded-full" style="width: ${m.scores.coherence * 50}%"></div></div>
+                        <div class="text-[10px] font-medium text-gray-600 mt-0.5">${m.scores.coherence.toFixed(1)}</div>
+                      </div>
+                      <div class="text-center">
+                        <div class="text-[9px] text-gray-400 mb-1">Agentic</div>
+                        <div class="w-full h-1.5 bg-gray-200 rounded-full"><div class="h-full bg-purple-500 rounded-full" style="width: ${m.scores.agentic * 50}%"></div></div>
+                        <div class="text-[10px] font-medium text-gray-600 mt-0.5">${m.scores.agentic.toFixed(1)}</div>
+                      </div>
+                      <div class="text-center">
+                        <div class="text-[9px] text-gray-400 mb-1">Latence</div>
+                        <div class="w-full h-1.5 bg-gray-200 rounded-full"><div class="h-full bg-yellow-500 rounded-full" style="width: ${m.scores.latency * 50}%"></div></div>
+                        <div class="text-[10px] font-medium text-gray-600 mt-0.5">${m.scores.latency.toFixed(1)}</div>
+                      </div>
+                      <div class="text-center">
+                        <div class="text-[9px] text-gray-400 mb-1">Contexte</div>
+                        <div class="w-full h-1.5 bg-gray-200 rounded-full"><div class="h-full bg-red-500 rounded-full" style="width: ${m.scores.context * 50}%"></div></div>
+                        <div class="text-[10px] font-medium text-gray-600 mt-0.5">${m.scores.context.toFixed(1)}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
           <button id="load-model-${slot}" class="px-3 py-1.5 text-xs font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors">
-            Load
+            Charger
           </button>
         </div>
         <div id="model-progress-${slot}" class="hidden mt-2">
@@ -182,7 +249,7 @@ function createChatColumn(slot) {
       <!-- Messages -->
       <div id="messages-${slot}" class="flex-1 overflow-y-auto p-3 space-y-3">
         <div class="text-center py-8 text-gray-400">
-          <p class="text-sm">Select and load a model</p>
+          <p class="text-sm">Sélectionnez et chargez un modèle</p>
         </div>
       </div>
     </div>
@@ -433,6 +500,37 @@ export function showAgentFromHistory(entry) {
 function setupColumnEvents(slot) {
   const loadBtn = document.getElementById(`load-model-${slot}`);
   const modelSelect = document.getElementById(`model-select-${slot}`);
+  const dropdownBtn = document.getElementById(`model-dropdown-btn-${slot}`);
+  const dropdownMenu = document.getElementById(`model-dropdown-menu-${slot}`);
+  const dropdownLabel = document.getElementById(`model-dropdown-label-${slot}`);
+  
+  // Toggle dropdown
+  dropdownBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdownMenu?.classList.toggle('hidden');
+  });
+  
+  // Close dropdown on outside click
+  document.addEventListener('click', () => {
+    dropdownMenu?.classList.add('hidden');
+  });
+  
+  // Handle option selection
+  dropdownMenu?.querySelectorAll('.model-option').forEach(option => {
+    const optionInner = option.querySelector('[data-model-id]');
+    
+    // Select model on click
+    optionInner?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const modelId = optionInner.dataset.modelId;
+      const model = MODEL_CATALOG.find(m => m.id === modelId);
+      if (model && modelSelect && dropdownLabel) {
+        modelSelect.value = modelId;
+        dropdownLabel.textContent = `${model.recommended ? '★ ' : ''}${model.name}`;
+        dropdownMenu?.classList.add('hidden');
+      }
+    });
+  });
   
   loadBtn?.addEventListener('click', async () => {
     const modelId = modelSelect.value;

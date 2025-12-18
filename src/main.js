@@ -51,7 +51,7 @@ function createMainUI(container) {
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-6">
         <div class="flex items-center gap-3">
-          <img src="/logo-llm-pdf-rag.avif" alt="Logo" class="w-10 h-10 rounded-xl shadow-sm object-cover" />
+          <img src="./logo-llm-pdf-rag.avif" alt="Logo" class="w-10 h-10 rounded-xl shadow-sm object-cover" />
           <div>
             <h1 class="text-lg font-bold text-gray-900">Literature Reviewer</h1>
             <p class="text-xs text-gray-500">Local AI Research Assistant</p>

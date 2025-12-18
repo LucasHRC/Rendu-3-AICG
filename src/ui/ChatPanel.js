@@ -42,7 +42,7 @@ export function createChatPanel() {
     <div class="flex-shrink-0 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <img src="/logo-llm-pdf-rag.avif" alt="Logo" class="w-10 h-10 rounded-xl shadow-sm object-cover" />
+          <img src="./logo-llm-pdf-rag.avif" alt="Logo" class="w-10 h-10 rounded-xl shadow-sm object-cover" />
           <div>
             <h2 class="text-sm font-bold text-gray-900">AI Research Assistant</h2>
             <p id="chat-mode-label" class="text-xs text-gray-500">Single Model Mode</p>
@@ -399,7 +399,7 @@ async function launchAgent(agentId) {
   if (agentContent) {
     agentContent.innerHTML = `
       <div class="flex flex-col items-center justify-center h-full text-gray-400">
-        <img src="/logo-llm-pdf-rag.avif" alt="Logo" class="w-16 h-16 rounded-xl shadow-sm object-cover mb-4 opacity-50" />
+        <img src="./logo-llm-pdf-rag.avif" alt="Logo" class="w-16 h-16 rounded-xl shadow-sm object-cover mb-4 opacity-50" />
         <p class="text-sm">Generation ${AGENT_NAMES[agentId]}...</p>
       </div>
     `;

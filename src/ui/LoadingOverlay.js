@@ -30,7 +30,7 @@ export function showLoadingOverlay(title, subtitle = '') {
     <div class="bg-white rounded-2xl shadow-2xl p-8 w-[420px] max-w-[90vw]">
       <!-- Header avec logo -->
       <div class="flex items-center gap-4 mb-6">
-        <img src="/logo-llm-pdf-rag.avif" alt="Logo" class="w-12 h-12 rounded-xl shadow-sm object-cover" />
+        <img src="./logo-llm-pdf-rag.avif" alt="Logo" class="w-12 h-12 rounded-xl shadow-sm object-cover" />
         <div>
           <h3 class="text-lg font-bold text-gray-900">${title}</h3>
           <p class="text-sm text-gray-500">${subtitle}</p>

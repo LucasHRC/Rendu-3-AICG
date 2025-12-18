@@ -179,9 +179,21 @@ function setupImportExport() {
 
         if (!data.chunks || !data.vectorStore) throw new Error('Invalid format');
 
+        // Réinitialiser
         state.chunks = [];
         state.vectorStore = [];
         state.docs = [];
+        
+        // Importer les documents si présents
+        if (data.docs && Array.isArray(data.docs)) {
+          state.docs = data.docs.map(doc => ({
+            ...doc,
+            file: null, // Pas de fichier brut
+            status: 'extracted'
+          }));
+        }
+        
+        // Importer chunks et vectorStore
         state.chunks = data.chunks;
         state.vectorStore = data.vectorStore.map(v => ({
           ...v,
@@ -191,7 +203,8 @@ function setupImportExport() {
         setImportedMode(true);
         renderCurrentTab();
         updateEmbeddingUI();
-        addLog('success', `Imported: ${state.chunks.length} chunks, ${state.vectorStore.length} embeddings`);
+        window.dispatchEvent(new CustomEvent('state:docAdded'));
+        addLog('success', `Imported: ${state.docs.length} docs, ${state.chunks.length} chunks, ${state.vectorStore.length} embeddings`);
 
       } catch (error) {
         addLog('error', `Import error: ${error.message}`);
@@ -202,9 +215,22 @@ function setupImportExport() {
   
   if (exportBtn) {
     exportBtn.addEventListener('click', () => {
+      // Exporter docs sans le fichier brut (File object non sérialisable)
+      const exportableDocs = state.docs.map(doc => ({
+        id: doc.id,
+        filename: doc.filename,
+        displayName: doc.displayName,
+        size: doc.size,
+        extractedText: doc.extractedText,
+        pageCount: doc.pageCount,
+        charCount: doc.charCount,
+        status: doc.status
+      }));
+      
       const data = {
-        version: 1,
+        version: 2,
         exportDate: new Date().toISOString(),
+        docs: exportableDocs,
         chunks: state.chunks,
         vectorStore: state.vectorStore.map(v => ({ ...v, vector: Array.from(v.vector) }))
       };
@@ -216,7 +242,7 @@ function setupImportExport() {
       a.download = `vectordb-${new Date().toISOString().split('T')[0]}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      addLog('success', `Exported: ${state.chunks.length} chunks, ${state.vectorStore.length} embeddings`);
+      addLog('success', `Exported: ${state.docs.length} docs, ${state.chunks.length} chunks, ${state.vectorStore.length} embeddings`);
     });
   }
   

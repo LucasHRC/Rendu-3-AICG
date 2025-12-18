@@ -2,12 +2,12 @@
  * Composant pour l'upload rapide avec workflow automatique guidé
  */
 
-import { state, addDocument, addLog, updateDocumentStatus, updateDocumentExtraction, addChunks } from '../state/state.js';
+import { state, addDocument, addLog, updateDocumentStatus, updateDocumentExtraction, addChunks, addEmbedding } from '../state/state.js';
 import { validatePDF } from '../utils/fileUtils.js';
 import { extractTextFromPDF } from '../rag/pdfExtract.js';
 import { createChunksForDocument } from '../rag/chunker.js';
 import { generateNameSuggestions } from '../utils/namingSuggestions.js';
-import { initEmbeddingModel, generateEmbeddingsForChunks } from '../rag/embeddings.js';
+import { initEmbeddingModel, generateEmbeddingsForChunks, isModelLoaded } from '../rag/embeddings.js';
 
 /**
  * Affiche la modal de workflow d'upload rapide
@@ -171,7 +171,16 @@ async function startWorkflow(files, modal) {
     updateStepUI(stepIndex);
 
     const step = workflowSteps[stepIndex];
+    
+    // Bloquer le bouton pendant le chargement
+    nextBtn.disabled = true;
+    nextBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    
     await step.fn(workflowState, stepContent, modal);
+    
+    // Débloquer le bouton après
+    nextBtn.disabled = false;
+    nextBtn.classList.remove('opacity-50', 'cursor-not-allowed');
 
     // Auto-continuer après un délai si c'est une étape automatique
     if (['upload', 'extract', 'chunking', 'embeddings'].includes(step.name)) {
@@ -405,84 +414,135 @@ async function showEmbeddingsStep(state, content, modal) {
   content.innerHTML = `
     <div class="py-8">
       <h3 class="text-lg font-semibold text-gray-900 mb-4 text-center">Génération des embeddings...</h3>
-      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-        <div class="flex items-center">
-          <div id="backend-badge" class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 mr-3">
-            Detection...
+      
+      <!-- Chargement du modèle -->
+      <div id="model-loading-section" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center">
+            <div id="backend-badge" class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600 mr-3">
+              Detection...
+            </div>
+            <span class="text-sm font-medium text-blue-700">Chargement du modèle</span>
           </div>
-          <span class="text-sm text-blue-700">Utilisation du backend le plus performant disponible</span>
+          <span id="model-progress-text" class="text-xs text-blue-600">0%</span>
         </div>
+        <div class="w-full bg-blue-200 rounded-full h-2">
+          <div id="model-progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p id="model-status" class="text-xs text-blue-600 mt-2">Initialisation...</p>
       </div>
 
-      <div class="space-y-4">
+      <!-- Génération embeddings -->
+      <div id="embeddings-section" class="space-y-4 opacity-50">
         <div class="bg-gray-50 p-4 rounded">
           <div class="flex items-center justify-between mb-2">
             <span class="text-sm font-medium">Embeddings pour ${state.chunks.length} chunks</span>
-            <div id="embeddings-progress" class="text-xs text-gray-500">0 / ${state.chunks.length}</div>
+            <div id="embeddings-progress" class="text-xs text-gray-500">En attente...</div>
           </div>
           <div class="w-full bg-gray-200 rounded-full h-2">
             <div id="embeddings-bar" class="bg-green-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
           </div>
         </div>
+        
+        <!-- Stream des chunks en cours -->
+        <div id="chunks-stream" class="bg-gray-900 rounded-lg p-3 max-h-32 overflow-y-auto font-mono text-xs text-gray-300 hidden">
+        </div>
       </div>
     </div>
   `;
 
-  // Mettre à jour le badge backend quand il sera détecté
   const backendBadge = modal.querySelector('#backend-badge');
+  const modelProgressBar = modal.querySelector('#model-progress-bar');
+  const modelProgressText = modal.querySelector('#model-progress-text');
+  const modelStatus = modal.querySelector('#model-status');
+  const modelLoadingSection = modal.querySelector('#model-loading-section');
+  const embeddingsSection = modal.querySelector('#embeddings-section');
+  const progressBar = modal.querySelector('#embeddings-bar');
+  const progressText = modal.querySelector('#embeddings-progress');
+  const chunksStream = modal.querySelector('#chunks-stream');
+
   const updateBadge = (backend) => {
-    let className, text;
-    switch (backend) {
-      case 'webgpu':
-        className = 'bg-green-100 text-green-700';
-        text = 'WebGPU';
-        break;
-      case 'webgpu-fallback':
-        className = 'bg-blue-100 text-blue-700';
-        text = 'WebGPU*';
-        break;
-      default:
-        className = 'bg-yellow-100 text-yellow-700';
-        text = 'WASM';
-    }
-    backendBadge.className = `px-2 py-1 text-xs rounded ${className}`;
-    backendBadge.textContent = text;
+    const configs = {
+      'webgpu': { className: 'bg-green-100 text-green-700', text: 'WebGPU' },
+      'webgpu-fallback': { className: 'bg-blue-100 text-blue-700', text: 'WebGPU*' },
+      'wasm': { className: 'bg-yellow-100 text-yellow-700', text: 'WASM' }
+    };
+    const config = configs[backend] || configs['wasm'];
+    backendBadge.className = `px-2 py-1 text-xs rounded ${config.className}`;
+    backendBadge.textContent = config.text;
   };
 
-  // Écouter la détection du backend
   const badgeListener = (e) => updateBadge(e.detail);
   window.addEventListener('embeddings:backendDetected', badgeListener);
 
   try {
-    // Générer les embeddings
-    const progressBar = modal.querySelector('#embeddings-bar');
-    const progressText = modal.querySelector('#embeddings-progress');
+    // 1. Charger le modèle si nécessaire
+    if (!isModelLoaded()) {
+      modelStatus.textContent = 'Téléchargement du modèle Xenova/all-MiniLM-L6-v2...';
+      
+      await initEmbeddingModel((pct) => {
+        modelProgressBar.style.width = `${pct}%`;
+        modelProgressText.textContent = `${pct}%`;
+        if (pct < 30) modelStatus.textContent = 'Téléchargement des fichiers...';
+        else if (pct < 70) modelStatus.textContent = 'Initialisation du modèle...';
+        else if (pct < 100) modelStatus.textContent = 'Préparation finale...';
+        else modelStatus.textContent = 'Modèle prêt !';
+      });
+    } else {
+      modelProgressBar.style.width = '100%';
+      modelProgressText.textContent = '100%';
+      modelStatus.textContent = 'Modèle déjà chargé';
+    }
 
+    // 2. Activer la section embeddings
+    modelLoadingSection.classList.remove('bg-blue-50', 'border-blue-200');
+    modelLoadingSection.classList.add('bg-green-50', 'border-green-200');
+    embeddingsSection.classList.remove('opacity-50');
+    chunksStream.classList.remove('hidden');
+    progressText.textContent = `0 / ${state.chunks.length}`;
+
+    // 3. Générer les embeddings avec streaming visuel
     const results = await generateEmbeddingsForChunks(state.chunks, (current, total) => {
       const pct = Math.round((current / total) * 100);
       progressBar.style.width = `${pct}%`;
       progressText.textContent = `${current} / ${total}`;
+      
+      // Afficher le chunk en cours dans le stream
+      const chunk = state.chunks[current - 1];
+      if (chunk) {
+        const line = document.createElement('div');
+        line.className = 'text-green-400 mb-1';
+        line.textContent = `[${current}/${total}] ${chunk.text.substring(0, 60)}...`;
+        chunksStream.appendChild(line);
+        chunksStream.scrollTop = chunksStream.scrollHeight;
+      }
     });
 
     state.embeddings = results;
-    addLog('success', `${results.length} embeddings générés avec succès`);
+    
+    // Stocker dans le vectorStore global
+    results.forEach(({ chunkId, vector }) => {
+      addEmbedding(chunkId, vector);
+    });
+    
+    // Afficher succès dans le stream
+    const successLine = document.createElement('div');
+    successLine.className = 'text-blue-400 mt-2 font-bold';
+    successLine.textContent = `Terminé : ${results.length} embeddings stockés dans vectorStore`;
+    chunksStream.appendChild(successLine);
+    
+    addLog('success', `${results.length} embeddings générés et stockés avec succès`);
 
   } catch (error) {
     addLog('error', `Échec génération embeddings: ${error.message}`);
 
-    // Afficher un message d'erreur dans la modal
     content.innerHTML += `
       <div class="mt-4 p-4 bg-red-50 border border-red-200 rounded">
-        <p class="text-red-700 text-sm">
-          ⚠️ Les embeddings n'ont pas pu être générés. L'application fonctionne en mode texte seulement.
-        </p>
-        <p class="text-red-600 text-xs mt-1">
-          ${error.message}
-        </p>
+        <p class="text-red-700 text-sm">Les embeddings n'ont pas pu être générés.</p>
+        <p class="text-red-600 text-xs mt-1">${error.message}</p>
       </div>
     `;
 
-    // Permettre de continuer quand même
     setTimeout(() => {
       const nextBtn = modal.querySelector('#next-btn');
       if (nextBtn) {

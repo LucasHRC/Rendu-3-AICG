@@ -1,15 +1,37 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# OS files
 .DS_Store
-*.log
+Thumbs.db
+
+# Environment
 .env
 .env.local
+.env.*.local
+
+# Vite cache
 .vite/
 
-# Documentation interne (ne pas publier)
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Internal documentation (do not publish)
 CHECKLIST.md
 PROJECT_REQUIREMENTS.md
 PROJECT.md
 Prompt.md
 docs/
 
+# Test files
+test-*.html

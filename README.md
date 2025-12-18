@@ -1,68 +1,120 @@
-# Local LLM Multi-Agent Literature Reviewer
+# Local LLM Literature Reviewer
 
-Une application de revue de littérature assistée par IA, fonctionnant entièrement dans le navigateur, sans backend. Respect de la vie privée garanti : tout le traitement se fait localement sur votre machine.
+A privacy-first, fully browser-based AI research assistant. This application runs entirely on the client side using WebLLM for reasoning and Transformers.js for embeddings. No data leaves your browser.
 
-## Objectif
+## Overview
 
-Construire un assistant de recherche académique qui peut :
-- Ingérer des PDFs de recherche
-- Les indexer dans une base de données vectorielle côté client
-- Utiliser un agent LLM pour synthétiser une revue de littérature de haute qualité basée sur vos questions et les documents fournis
+Upload PDF research papers, automatically extract and vectorize their content, then use semantic search to find relevant passages. The RAG (Retrieval Augmented Generation) engine enables context-aware interactions with your documents.
 
-## Privacy-First
+```
+PDF Upload --> Text Extraction --> Chunking --> Embeddings --> Vector Store --> Semantic Search
+```
 
-Contrairement aux solutions cloud, cette application s'exécute entièrement côté client en utilisant :
-- **WebLLM** (pour le raisonnement)
-- **Transformers.js** (pour les embeddings et l'audio)
+## Features
 
-Aucune donnée n'est envoyée à des serveurs externes.
+- Drag-and-drop PDF upload with multi-file support
+- Automatic text extraction using PDF.js
+- Intelligent semantic chunking (respects sentence boundaries)
+- Vector embeddings with Transformers.js (all-MiniLM-L6-v2, 384 dimensions)
+- Custom vector store with cosine similarity search
+- WebGPU acceleration with WASM fallback
+- Export/Import vector database
+- Real-time console and debug tools
 
 ## Tech Stack
 
-- **WebLLM** : Inférence LLM haute performance dans le navigateur
-- **Transformers.js** : Machine Learning pour le web (Embeddings/Whisper)
-- **PDF.js** : Bibliothèque d'analyse PDF
-- **Tailwind CSS** : Framework CSS utilitaire
-- **Vanilla JavaScript** : Pas de framework, code pur
-- **Vite** : Build tool et dev server
+| Component | Technology |
+|-----------|------------|
+| Framework | Vanilla JavaScript (ES Modules) |
+| Build Tool | Vite |
+| Styling | Tailwind CSS |
+| PDF Processing | PDF.js |
+| Embeddings | Transformers.js (Xenova/all-MiniLM-L6-v2) |
+| LLM Inference | WebLLM (planned) |
+| Deployment | GitHub Pages |
 
-## Local Setup
+## Architecture
 
-### Prérequis
+```
+src/
+├── main.js              # Application entry point
+├── state/
+│   └── state.js         # Centralized state management
+├── rag/
+│   ├── pdfExtract.js    # PDF text extraction
+│   ├── chunker.js       # Semantic text chunking
+│   ├── embeddings.js    # Transformers.js integration
+│   └── search.js        # Cosine similarity search
+├── ui/
+│   ├── Dropzone.js      # File upload component
+│   ├── FileList.js      # Document management
+│   ├── IngestionPanel.js # Vector store UI
+│   ├── PDFViewer.js     # PDF preview modal
+│   └── QuickUpload.js   # Guided upload workflow
+└── utils/
+    ├── fileUtils.js     # File validation
+    └── namingSuggestions.js
+```
 
-- Node.js 18+ installé
-- Navigateur moderne avec support WebGPU (Chrome/Edge recommandé)
+## Local Development
 
-### Installation
+### Prerequisites
+
+- Node.js 18+
+- Modern browser with WebGPU support (Chrome 113+, Edge 113+)
+
+### Setup
 
 ```bash
-# Installer les dépendances
+# Clone the repository
+git clone https://github.com/your-username/Rendu-3-AICG.git
+cd Rendu-3-AICG
+
+# Install dependencies
 npm install
 
-# Lancer le serveur de développement
+# Start development server
 npm run dev
 ```
 
-L'application sera accessible sur `http://localhost:3000`
+Open `http://localhost:5173` in your browser.
 
-**Note importante** : Vous devez utiliser un serveur local (pas juste ouvrir `index.html` directement) car le projet utilise des modules ES et charge des fichiers externes.
-
-### Alternative avec Python
-
-Si vous préférez Python :
+### Build for Production
 
 ```bash
-python -m http.server
-# Puis ouvrir http://localhost:8000
-```
-
-## Deployment GH Pages
-
-```bash
-# Build pour production
 npm run build
-
-# Le dossier dist/ contient les fichiers à déployer
-# Configurer GitHub Pages pour pointer vers dist/
+npm run preview
 ```
 
+## Usage
+
+1. **Upload Documents**: Drag PDFs into the dropzone or use Quick Upload
+2. **Extract Text**: Click "Extract All" or extract individual documents
+3. **Generate Embeddings**: Click "Generate Embeddings" to vectorize all chunks
+4. **Search**: Use the Search tab to test semantic queries
+5. **Export**: Save your vector database for later use
+
+## Privacy
+
+All processing happens locally in your browser:
+
+- PDFs are never uploaded to any server
+- Text extraction runs client-side via PDF.js
+- Embeddings are generated locally using Transformers.js
+- Vector database is stored in browser memory
+- Export creates a local JSON file
+
+No data leaves your machine.
+
+## Browser Compatibility
+
+| Browser | WebGPU | WASM | Status |
+|---------|--------|------|--------|
+| Chrome 113+ | Yes | Yes | Full support |
+| Edge 113+ | Yes | Yes | Full support |
+| Safari 17+ | Partial | Yes | WASM fallback |
+| Firefox | No | Yes | WASM only |
+
+## License
+
+MIT

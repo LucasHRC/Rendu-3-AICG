@@ -33,7 +33,10 @@ export const state = {
     name: null,
     error: null
   },
-  
+
+  // Mode importé (désactive upload quand base importée)
+  importedMode: false,
+
   // Logs pour le panel de logs
   logs: []
 };
@@ -424,6 +427,24 @@ export function getVectorStoreStats() {
     chunksWithEmbeddings: state.vectorStore.length,
     chunksWithoutEmbeddings: state.chunks.length - state.vectorStore.length
   };
+}
+
+/**
+ * Définit le mode importé
+ * @param {boolean} isActive - true pour activer le mode importé
+ */
+export function setImportedMode(isActive) {
+  state.importedMode = isActive;
+  window.dispatchEvent(new CustomEvent('state:importedModeChanged', { detail: isActive }));
+  addLog('info', `Mode importé ${isActive ? 'activé' : 'désactivé'}`);
+}
+
+/**
+ * Vérifie si le mode importé est actif
+ * @returns {boolean}
+ */
+export function isImportedMode() {
+  return state.importedMode;
 }
 
 // Initialisation

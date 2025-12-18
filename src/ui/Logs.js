@@ -1,101 +1,75 @@
 /**
- * Composant UI : Panel de Logs
- * Affiche les logs de l'application en temps réel
+ * Composant UI : Panel de logs - Design avec couleurs
  */
 
+import { state } from '../state/state.js';
+
+/**
+ * Crée le panel de logs
+ */
 export function createLogsPanel() {
-  const logsContainer = document.createElement('div');
-  logsContainer.id = 'logs-panel';
-  logsContainer.className = 'bg-gray-900 text-green-400 font-mono text-sm p-4 rounded-lg overflow-y-auto max-h-64';
-  
-  const logsTitle = document.createElement('h3');
-  logsTitle.className = 'text-white font-bold mb-2 text-lg';
-  logsTitle.textContent = 'Logs';
-  
-  const logsList = document.createElement('div');
-  logsList.id = 'logs-list';
-  logsList.className = 'space-y-1';
-  
-  logsContainer.appendChild(logsTitle);
-  logsContainer.appendChild(logsList);
-  
+  const panel = document.createElement('div');
+  panel.id = 'logs-panel';
+  panel.className = 'h-full overflow-y-auto text-sm font-mono bg-gray-50 rounded-xl p-3';
+
   // Écouter les nouveaux logs
-  window.addEventListener('state:log', (event) => {
-    addLogEntry(event.detail, logsList);
+  window.addEventListener('state:logAdded', (e) => {
+    const log = e.detail;
+    const logElement = createLogEntry(log);
+    panel.appendChild(logElement);
+    panel.scrollTop = panel.scrollHeight;
   });
-  
-  return logsContainer;
+
+  return panel;
 }
 
 /**
- * Ajoute une entrée de log à la liste
+ * Rend les logs initiaux
  */
-function addLogEntry(logEntry, container) {
-  const logElement = document.createElement('div');
-  logElement.className = 'flex items-start gap-2';
-  
-  // Icône selon le niveau
-  const icon = getLogIcon(logEntry.level);
-  const color = getLogColor(logEntry.level);
-  
-  logElement.innerHTML = `
-    <span class="text-xs text-gray-500">${logEntry.timestamp}</span>
-    <span class="${color}">${icon}</span>
-    <span class="flex-1">${logEntry.message}</span>
-  `;
-  
-  // Ajouter les données si présentes
-  if (logEntry.data) {
-    const dataElement = document.createElement('details');
-    dataElement.className = 'text-xs text-gray-400 ml-6';
-    dataElement.innerHTML = `
-      <summary class="cursor-pointer">Details</summary>
-      <pre class="mt-1 p-2 bg-gray-800 rounded">${JSON.stringify(logEntry.data, null, 2)}</pre>
-    `;
-    logElement.appendChild(dataElement);
-  }
-  
-  container.appendChild(logElement);
-  
-  // Scroll vers le bas
-  container.scrollTop = container.scrollHeight;
-  
-  // Limiter à 50 entrées visibles
-  const children = container.children;
-  if (children.length > 50) {
-    container.removeChild(children[0]);
-  }
-}
-
-function getLogIcon(level) {
-  const icons = {
-    info: '[i]',
-    success: '[+]',
-    warning: '[!]',
-    error: '[x]'
-  };
-  return icons[level] || '[.]';
-}
-
-function getLogColor(level) {
-  const colors = {
-    info: 'text-blue-400',
-    success: 'text-green-400',
-    warning: 'text-yellow-400',
-    error: 'text-red-400'
-  };
-  return colors[level] || 'text-gray-400';
+export function renderInitialLogs(logs, panel) {
+  if (!panel) return;
+  panel.innerHTML = '';
+  logs.forEach((log) => {
+    panel.appendChild(createLogEntry(log));
+  });
+  panel.scrollTop = panel.scrollHeight;
 }
 
 /**
- * Initialise les logs existants depuis le state
+ * Crée une entrée de log
  */
-export function renderInitialLogs(logs, container) {
-  const logsList = container.querySelector('#logs-list');
-  if (!logsList) return;
-  
-  logs.forEach(log => {
-    addLogEntry(log, logsList);
-  });
-}
+function createLogEntry(log) {
+  const entry = document.createElement('div');
+  entry.className = 'flex items-start gap-3 py-1';
 
+  const time = document.createElement('span');
+  time.className = 'text-gray-400 flex-shrink-0 text-xs';
+  time.textContent = log.timestamp.toLocaleTimeString('en-US', { 
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+
+  const icon = document.createElement('span');
+  const configs = {
+    info: ['text-blue-500', '●'],
+    success: ['text-green-500', '●'],
+    warning: ['text-yellow-500', '●'],
+    error: ['text-red-500', '●']
+  };
+  const [color, symbol] = configs[log.level] || configs.info;
+  icon.className = `flex-shrink-0 text-xs ${color}`;
+  icon.textContent = symbol;
+
+  const message = document.createElement('span');
+  message.className = 'flex-1 min-w-0 truncate text-gray-700';
+  message.textContent = log.message;
+  message.title = log.message;
+
+  entry.appendChild(time);
+  entry.appendChild(icon);
+  entry.appendChild(message);
+
+  return entry;
+}

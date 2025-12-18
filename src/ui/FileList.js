@@ -1,5 +1,5 @@
 /**
- * Composant UI : Liste des fichiers uploadés
+ * Composant UI : Liste des fichiers - Design avec accents couleurs
  */
 
 import { state, removeDocument, updateDocumentStatus, updateDocumentExtraction, addChunks } from '../state/state.js';
@@ -10,45 +10,24 @@ import { createChunksForDocument } from '../rag/chunker.js';
 
 /**
  * Crée le composant de liste des fichiers
- * @returns {HTMLElement} - Le conteneur de la liste
  */
 export function createFileList() {
   const container = document.createElement('div');
   container.id = 'file-list-container';
-  container.className = 'mt-6';
-
-  const title = document.createElement('h3');
-  title.className = 'text-lg font-bold mb-4 text-gray-800';
-  title.textContent = 'Documents Uploades';
 
   const list = document.createElement('div');
   list.id = 'file-list';
   list.className = 'space-y-3';
 
-  container.appendChild(title);
   container.appendChild(list);
-
-  // Rendu initial
   renderFileList();
 
-  // Écouter les événements de changement d'état
-  window.addEventListener('state:docAdded', () => {
-    renderFileList();
-  });
+  // Événements
+  window.addEventListener('state:docAdded', renderFileList);
+  window.addEventListener('state:docRemoved', renderFileList);
+  window.addEventListener('state:docUpdated', renderFileList);
+  window.addEventListener('state:docExtracted', renderFileList);
 
-  window.addEventListener('state:docRemoved', () => {
-    renderFileList();
-  });
-
-  window.addEventListener('state:docUpdated', () => {
-    renderFileList();
-  });
-
-  window.addEventListener('state:docExtracted', () => {
-    renderFileList();
-  });
-
-  // Écouter l'action "Extraire tout"
   window.addEventListener('action:extractAll', async () => {
     const docsToExtract = state.docs.filter(doc => !doc.extractedText && doc.status !== 'extracting');
     for (const doc of docsToExtract) {
@@ -60,285 +39,242 @@ export function createFileList() {
 }
 
 /**
- * Rend la liste des fichiers depuis le state
+ * Rend la liste des fichiers
  */
 function renderFileList() {
   const list = document.getElementById('file-list');
   if (!list) return;
 
-  // Vider la liste
   list.innerHTML = '';
 
-  // Si aucun fichier
   if (state.docs.length === 0) {
-    const emptyMessage = document.createElement('p');
-    emptyMessage.className = 'text-gray-500 text-center py-8 italic';
-    emptyMessage.textContent = 'Aucun document uploadé pour le moment';
-    list.appendChild(emptyMessage);
+    list.innerHTML = `
+      <div class="text-center py-12 text-gray-400">
+        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <p class="text-sm font-medium">No documents yet</p>
+        <p class="text-xs mt-1">Drop PDFs above to get started</p>
+      </div>
+    `;
     return;
   }
 
-  // Créer une carte pour chaque fichier
   state.docs.forEach((doc) => {
-    const fileCard = createFileCard(doc);
-    list.appendChild(fileCard);
+    list.appendChild(createFileCard(doc));
   });
 }
 
 /**
  * Crée une carte pour un fichier
- * @param {object} doc - Le document à afficher
- * @returns {HTMLElement} - L'élément carte
  */
 function createFileCard(doc) {
   const card = document.createElement('div');
-  card.className = 'bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow';
+  card.className = 'group bg-gray-50 hover:bg-white border border-gray-200 hover:border-blue-200 rounded-xl p-4 transition-all hover:shadow-md';
   card.dataset.fileId = doc.id;
 
-  // Header avec nom et bouton supprimer
-  const header = document.createElement('div');
-  header.className = 'flex items-center justify-between mb-2';
+  // Ligne principale
+  const mainRow = document.createElement('div');
+  mainRow.className = 'flex items-center gap-4';
 
-  const fileInfo = document.createElement('div');
-  fileInfo.className = 'flex items-center space-x-2 flex-1 min-w-0';
+  // Icône status avec couleur
+  const statusIcon = document.createElement('div');
+  const statusColors = {
+    uploaded: 'bg-blue-500',
+    extracting: 'bg-yellow-500 animate-pulse',
+    extracted: 'bg-green-500',
+    error: 'bg-red-500'
+  };
+  statusIcon.className = `w-3 h-3 rounded-full flex-shrink-0 ${statusColors[doc.status] || statusColors.uploaded}`;
 
-  const icon = document.createElement('span');
-  icon.className = 'flex-shrink-0';
-  icon.innerHTML = `<svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-  </svg>`;
-
+  // Nom du fichier
+  const nameContainer = document.createElement('div');
+  nameContainer.className = 'flex-1 min-w-0';
+  
   const filename = document.createElement('span');
-  filename.className = 'font-semibold text-gray-800 truncate';
-  filename.textContent = doc.filename;
-  filename.title = doc.filename; // Tooltip pour nom complet
+  filename.className = 'text-sm font-semibold text-gray-900 truncate block cursor-text hover:text-blue-600';
+  filename.textContent = doc.displayName || doc.filename;
+  filename.title = 'Double-click to rename';
+  
+  filename.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    showRenameInput(doc, filename);
+  });
 
-  fileInfo.appendChild(icon);
-  fileInfo.appendChild(filename);
+  const meta = document.createElement('div');
+  meta.className = 'text-xs text-gray-500 mt-1 flex items-center gap-2';
+  
+  const docChunks = state.chunks.filter(c => c.docId === doc.id);
+  
+  meta.innerHTML = `
+    <span>${formatFileSize(doc.size)}</span>
+    ${docChunks.length > 0 ? `<span class="text-purple-600 font-medium">${docChunks.length} chunks</span>` : ''}
+  `;
 
-  // Boutons d'action
-  const actionsContainer = document.createElement('div');
-  actionsContainer.className = 'flex items-center space-x-2 flex-shrink-0';
+  nameContainer.appendChild(filename);
+  nameContainer.appendChild(meta);
 
-  // Bouton pour visualiser le PDF
-  const viewButton = document.createElement('button');
-  viewButton.className = 'px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors';
-  viewButton.textContent = 'Voir';
-  viewButton.title = 'Visualiser le PDF';
-  viewButton.setAttribute('aria-label', `Visualiser ${doc.filename}`);
-  viewButton.addEventListener('click', (e) => {
+  // Actions
+  const actions = document.createElement('div');
+  actions.className = 'flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity';
+
+  // Bouton renommer
+  const renameBtn = createActionButton('Rename', `
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  `, 'text-gray-500 hover:text-blue-600 hover:bg-blue-50');
+  renameBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showRenameInput(doc, filename);
+  });
+
+  // Bouton voir
+  const viewBtn = createActionButton('View PDF', `
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+    </svg>
+  `, 'text-gray-500 hover:text-blue-600 hover:bg-blue-50');
+  viewBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     showPDFViewer(doc.file, doc.filename);
   });
 
-  // Bouton pour extraire le texte (si pas encore extrait)
+  // Bouton extraire
   if (!doc.extractedText && doc.status !== 'extracting') {
-    const extractButton = document.createElement('button');
-    extractButton.className = 'px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors';
-    extractButton.textContent = 'Extraire';
-    extractButton.title = 'Extraire le texte du PDF';
-    extractButton.setAttribute('aria-label', `Extraire ${doc.filename}`);
-    extractButton.addEventListener('click', async (e) => {
+    const extractBtn = createActionButton('Extract text', `
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+      </svg>
+    `, 'text-white bg-green-600 hover:bg-green-700');
+    extractBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await handleExtraction(doc.id);
     });
-    actionsContainer.appendChild(extractButton);
+    actions.appendChild(extractBtn);
   }
 
-  // Indicateur d'extraction en cours
-  if (doc.status === 'extracting') {
-    const extractingIndicator = document.createElement('span');
-    extractingIndicator.className = 'px-3 py-1 text-sm bg-yellow-100 text-yellow-800 rounded animate-pulse';
-    extractingIndicator.textContent = 'Extraction...';
-    actionsContainer.appendChild(extractingIndicator);
-  }
-
-  actionsContainer.appendChild(viewButton);
-
-  const deleteButton = document.createElement('button');
-  deleteButton.className = 'ml-4 text-red-500 hover:text-red-700 hover:bg-red-50 rounded p-1 transition-colors flex-shrink-0';
-  deleteButton.innerHTML = '×';
-  deleteButton.title = 'Supprimer';
-  deleteButton.setAttribute('aria-label', `Supprimer ${doc.filename}`);
-  deleteButton.addEventListener('click', (e) => {
+  // Bouton supprimer
+  const deleteBtn = createActionButton('Delete', `
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>
+  `, 'text-gray-500 hover:text-red-600 hover:bg-red-50');
+  deleteBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm(`Voulez-vous supprimer "${doc.filename}" ?`)) {
+    if (confirm(`Delete "${doc.displayName || doc.filename}"?`)) {
       removeDocument(doc.id);
     }
   });
 
-  header.appendChild(fileInfo);
-  header.appendChild(actionsContainer);
-  header.appendChild(deleteButton);
+  actions.appendChild(renameBtn);
+  actions.appendChild(viewBtn);
+  actions.appendChild(deleteBtn);
 
-  // Métadonnées
-  const metadata = document.createElement('div');
-  metadata.className = 'flex items-center space-x-4 text-sm text-gray-600 mt-2';
+  mainRow.appendChild(statusIcon);
+  mainRow.appendChild(nameContainer);
+  mainRow.appendChild(actions);
+  card.appendChild(mainRow);
 
-  const size = document.createElement('span');
-  size.textContent = formatFileSize(doc.size);
-
-  const date = document.createElement('span');
-  date.textContent = doc.uploadedAt.toLocaleTimeString();
-
-  const statusBadge = createStatusBadge(doc.status);
-
-  metadata.appendChild(size);
-  metadata.appendChild(document.createTextNode('•'));
-  metadata.appendChild(date);
-  metadata.appendChild(document.createTextNode('•'));
-  metadata.appendChild(statusBadge);
-
-  // Stats d'extraction si disponible
+  // Preview texte
   if (doc.extractedText) {
-    const statsContainer = document.createElement('div');
-    statsContainer.className = 'mt-2 flex items-center space-x-2 text-sm text-gray-700';
-    
-    const pagesIcon = document.createElement('span');
-    pagesIcon.textContent = '📊';
-    
-    // Compter les chunks pour ce document
-    const docChunks = state.chunks.filter(c => c.docId === doc.id);
-    const chunksInfo = docChunks.length > 0 ? ` • ${docChunks.length} chunks` : '';
-    
-    const statsText = document.createElement('span');
-    statsText.textContent = `${doc.pageCount} pages • ${doc.charCount.toLocaleString()} caractères${chunksInfo}`;
-    
-    statsContainer.appendChild(pagesIcon);
-    statsContainer.appendChild(statsText);
-    metadata.appendChild(statsContainer);
-  }
+    const preview = document.createElement('div');
+    preview.className = 'mt-3 pt-3 border-t border-gray-200 hidden';
+    preview.id = `preview-${doc.id}`;
+    preview.innerHTML = `
+      <div class="text-xs text-gray-600 bg-white rounded-lg p-3 max-h-28 overflow-y-auto font-mono leading-relaxed border border-gray-100">
+        ${doc.extractedText.substring(0, 400)}...
+      </div>
+    `;
 
-  // Preview du texte extrait
-  if (doc.extractedText) {
-    const previewContainer = document.createElement('div');
-    previewContainer.className = 'mt-3 border-t border-gray-200 pt-3';
-    
-    const previewTitle = document.createElement('div');
-    previewTitle.className = 'flex items-center justify-between mb-2';
-    
-    const previewLabel = document.createElement('span');
-    previewLabel.className = 'text-sm font-semibold text-gray-700';
-    previewLabel.textContent = 'Preview texte extrait';
-    
-    previewTitle.appendChild(previewLabel);
-    
-    const previewText = document.createElement('div');
-    previewText.className = 'bg-gray-50 rounded p-3 text-sm text-gray-700 max-h-32 overflow-y-auto border border-gray-200';
-    
-    // Afficher les 500 premiers caractères avec option d'expansion
-    const previewLength = 500;
-    const isLong = doc.extractedText.length > previewLength;
-    const displayText = isLong ? doc.extractedText.substring(0, previewLength) + '...' : doc.extractedText;
-    
-    previewText.textContent = displayText;
-    previewText.style.whiteSpace = 'pre-wrap';
-    previewText.style.wordBreak = 'break-word';
-    
-    previewContainer.appendChild(previewTitle);
-    previewContainer.appendChild(previewText);
-    
-    // Bouton pour voir tout le texte si long
-    if (isLong) {
-      let expanded = false;
-      const expandButton = document.createElement('button');
-      expandButton.className = 'mt-2 text-xs text-blue-600 hover:text-blue-800';
-      expandButton.textContent = 'Voir tout le texte';
-      expandButton.addEventListener('click', () => {
-        if (!expanded) {
-          previewText.textContent = doc.extractedText;
-          expandButton.textContent = 'Réduire';
-          previewText.classList.remove('max-h-32');
-          expanded = true;
-        } else {
-          previewText.textContent = displayText;
-          expandButton.textContent = 'Voir tout le texte';
-          previewText.classList.add('max-h-32');
-          expanded = false;
-        }
-      });
-      previewContainer.appendChild(expandButton);
-    }
-    
-    card.appendChild(previewContainer);
-  }
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'mt-2 text-xs font-medium text-blue-600 hover:text-blue-800';
+    toggleBtn.textContent = 'Show preview';
+    toggleBtn.addEventListener('click', () => {
+      preview.classList.toggle('hidden');
+      toggleBtn.textContent = preview.classList.contains('hidden') ? 'Show preview' : 'Hide preview';
+    });
 
-  // Message d'erreur si présent
-  if (doc.error) {
-    const errorMsg = document.createElement('div');
-    errorMsg.className = 'mt-2 text-sm text-red-600';
-    errorMsg.textContent = `Erreur: ${doc.error}`;
-    card.appendChild(errorMsg);
+    card.appendChild(toggleBtn);
+    card.appendChild(preview);
   }
-
-  card.appendChild(header);
-  card.appendChild(metadata);
 
   return card;
 }
 
 /**
- * Gère l'extraction de texte d'un document
- * @param {string} docId - L'ID du document à extraire
+ * Crée un bouton d'action
+ */
+function createActionButton(title, iconSvg, extraClass = '') {
+  const btn = document.createElement('button');
+  btn.className = `p-2 rounded-lg transition-colors ${extraClass}`;
+  btn.title = title;
+  btn.innerHTML = iconSvg;
+  return btn;
+}
+
+/**
+ * Affiche l'input de renommage
+ */
+function showRenameInput(doc, filenameEl) {
+  const currentName = doc.displayName || doc.filename.replace(/\.pdf$/i, '');
+  
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentName;
+  input.className = 'text-sm font-semibold text-gray-900 bg-white border-2 border-blue-500 rounded-lg px-2 py-1 w-full focus:outline-none';
+  
+  const originalText = filenameEl.textContent;
+  filenameEl.textContent = '';
+  filenameEl.appendChild(input);
+  input.focus();
+  input.select();
+
+  const save = () => {
+    const newName = input.value.trim();
+    if (newName && newName !== currentName) {
+      doc.displayName = newName;
+      window.dispatchEvent(new CustomEvent('state:docUpdated', { detail: { id: doc.id } }));
+    }
+    filenameEl.textContent = doc.displayName || doc.filename;
+  };
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') { filenameEl.textContent = originalText; }
+  });
+}
+
+/**
+ * Gère l'extraction
  */
 async function handleExtraction(docId) {
   const doc = state.docs.find(d => d.id === docId);
   if (!doc) return;
 
-  // Mettre à jour le statut
   updateDocumentStatus(docId, 'extracting');
-  renderFileList(); // Mise à jour immédiate de l'UI
+  renderFileList();
 
   try {
-    // Extraire le texte
     const extractionData = await extractTextFromPDF(doc.file);
-
-    // Mettre à jour le document avec les données d'extraction
     updateDocumentExtraction(docId, extractionData);
 
-    // Créer les chunks (500 chars cible, 1 phrase d'overlap)
     const chunks = createChunksForDocument(
       extractionData.text,
       doc.filename,
       docId,
-      500,  // targetSize
-      1     // overlapSentences
+      500,
+      1
     );
 
-    // Ajouter les chunks au state
     addChunks(chunks);
-
-    // Re-rendre la liste
     renderFileList();
 
   } catch (error) {
-    console.error('Erreur extraction:', error);
+    console.error('Extraction error:', error);
     updateDocumentStatus(docId, 'error', error.message);
     renderFileList();
   }
 }
-
-/**
- * Crée un badge de statut coloré
- * @param {string} status - Le statut du document
- * @returns {HTMLElement} - Le badge
- */
-function createStatusBadge(status) {
-  const badge = document.createElement('span');
-  
-  const statusConfig = {
-    uploaded: { text: 'Uploaded', class: 'bg-green-100 text-green-800' },
-    extracting: { text: 'Extracting...', class: 'bg-yellow-100 text-yellow-800' },
-    extracted: { text: 'Extracted', class: 'bg-blue-100 text-blue-800' },
-    processing: { text: 'Processing', class: 'bg-yellow-100 text-yellow-800' },
-    error: { text: 'Error', class: 'bg-red-100 text-red-800' }
-  };
-
-  const config = statusConfig[status] || statusConfig.uploaded;
-  
-  badge.className = `px-2 py-1 rounded text-xs font-medium ${config.class}`;
-  badge.textContent = config.text;
-
-  return badge;
-}
-

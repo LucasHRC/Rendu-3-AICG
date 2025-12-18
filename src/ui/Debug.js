@@ -1,87 +1,66 @@
 /**
- * Composant UI : Debug Panel / State Inspector
- * Affiche l'état de l'application en mode debug
+ * Composant UI : Panel de debug - Design avec couleurs
  */
 
-import { state, getStateSummary, toggleDebugMode } from '../state/state.js';
+import { state } from '../state/state.js';
 
+/**
+ * Crée le panel de debug
+ */
 export function createDebugPanel() {
-  const debugContainer = document.createElement('div');
-  debugContainer.id = 'debug-panel';
-  debugContainer.className = 'bg-gray-800 text-white p-4 rounded-lg';
-  
-  // Header avec toggle
-  const header = document.createElement('div');
-  header.className = 'flex items-center justify-between mb-4';
-  
-  const title = document.createElement('h3');
-  title.className = 'text-lg font-bold';
-  title.textContent = 'Debug Mode';
-  
-  const toggle = document.createElement('button');
-  toggle.id = 'debug-toggle';
-  toggle.className = 'px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition';
-  toggle.textContent = state.settings.debugMode ? 'Disable' : 'Enable';
-  toggle.addEventListener('click', () => {
-    toggleDebugMode();
-    updateToggleButton(toggle);
-    updateDebugPanel(debugContainer);
-  });
-  
-  header.appendChild(title);
-  header.appendChild(toggle);
-  
-  // Panel de contenu (caché par défaut si debug désactivé)
-  const content = document.createElement('div');
-  content.id = 'debug-content';
-  content.className = `mt-4 ${state.settings.debugMode ? '' : 'hidden'}`;
-  
-  const stateDisplay = document.createElement('pre');
-  stateDisplay.id = 'debug-state';
-  stateDisplay.className = 'bg-gray-900 p-4 rounded text-xs overflow-x-auto';
-  stateDisplay.textContent = JSON.stringify(getStateSummary(), null, 2);
-  
-  content.appendChild(stateDisplay);
-  
-  debugContainer.appendChild(header);
-  debugContainer.appendChild(content);
-  
-  // Écouter les changements d'état
-  window.addEventListener('state:debugToggle', () => {
-    updateDebugPanel(debugContainer);
-  });
-  
-  // Mettre à jour périodiquement (toutes les 2 secondes)
-  setInterval(() => {
-    if (state.settings.debugMode) {
-      updateStateDisplay(stateDisplay);
+  const panel = document.createElement('div');
+  panel.id = 'debug-panel';
+  panel.className = 'h-full bg-gray-50 rounded-xl p-3';
+
+  panel.innerHTML = `
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-sm font-semibold text-gray-700">Debug</span>
+      <button id="debug-toggle" class="px-2.5 py-1 text-xs font-medium bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors">
+        Show
+      </button>
+    </div>
+    <div id="debug-content" class="hidden">
+      <pre id="debug-state" class="text-xs text-gray-600 overflow-auto max-h-20 bg-white rounded-lg p-2 font-mono border border-gray-200"></pre>
+    </div>
+  `;
+
+  const toggleBtn = panel.querySelector('#debug-toggle');
+  const content = panel.querySelector('#debug-content');
+  const stateDisplay = panel.querySelector('#debug-state');
+
+  let isVisible = false;
+
+  toggleBtn.addEventListener('click', () => {
+    isVisible = !isVisible;
+    content.classList.toggle('hidden', !isVisible);
+    toggleBtn.textContent = isVisible ? 'Hide' : 'Show';
+    
+    if (isVisible) {
+      updateDebugState(stateDisplay);
     }
-  }, 2000);
-  
-  return debugContainer;
+  });
+
+  setInterval(() => {
+    if (isVisible) {
+      updateDebugState(stateDisplay);
+    }
+  }, 1000);
+
+  return panel;
 }
 
-function updateToggleButton(button) {
-  button.textContent = state.settings.debugMode ? 'Disable' : 'Enable';
-  button.className = state.settings.debugMode
-    ? 'px-4 py-2 bg-red-600 hover:bg-red-700 rounded transition'
-    : 'px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition';
-}
-
-function updateDebugPanel(container) {
-  const content = container.querySelector('#debug-content');
-  const stateDisplay = container.querySelector('#debug-state');
-  
-  if (state.settings.debugMode) {
-    content.classList.remove('hidden');
-    updateStateDisplay(stateDisplay);
-  } else {
-    content.classList.add('hidden');
-  }
-}
-
-function updateStateDisplay(element) {
+/**
+ * Met à jour l'affichage du state
+ */
+function updateDebugState(element) {
   if (!element) return;
-  element.textContent = JSON.stringify(getStateSummary(), null, 2);
+  
+  const summary = {
+    docs: state.docs.length,
+    chunks: state.chunks.length,
+    vectors: state.vectorStore.length,
+    logs: state.logs.length
+  };
+  
+  element.textContent = JSON.stringify(summary, null, 2);
 }
-

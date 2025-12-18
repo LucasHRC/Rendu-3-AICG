@@ -1,5 +1,5 @@
 /**
- * Module de recherche RAG - Cosine Similarity et recherche de chunks
+ * Module de recherche RAG - Cosine Similarity et recherche multi-docs
  */
 
 import { state } from '../state/state.js';
@@ -8,11 +8,6 @@ import { addLog } from '../state/state.js';
 
 /**
  * Calcule la similarité cosinus entre deux vecteurs
- * Formule: similarity = (A·B) / (||A|| × ||B||)
- * 
- * @param {Float32Array|number[]} vecA - Premier vecteur
- * @param {Float32Array|number[]} vecB - Second vecteur
- * @returns {number} - Score de similarité entre -1 et 1
  */
 export function cosineSimilarity(vecA, vecB) {
   if (!vecA || !vecB || vecA.length !== vecB.length) {
@@ -31,20 +26,20 @@ export function cosineSimilarity(vecA, vecB) {
   }
 
   const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-  
   if (denominator === 0) return 0;
-  
   return dotProduct / denominator;
 }
 
 /**
- * Recherche les chunks les plus similaires à une requête
- * 
+ * Recherche les chunks les plus similaires avec couverture multi-docs
  * @param {string} query - La requête textuelle
- * @param {number} topN - Nombre de résultats à retourner (défaut: 5)
- * @returns {Promise<Array>} - Liste des chunks triés par similarité décroissante
+ * @param {number} topN - Nombre total de chunks à retourner
+ * @param {Object} options - Options avancées
+ * @returns {Promise<Array>} - Chunks groupés par document
  */
-export async function searchSimilarChunks(query, topN = 5) {
+export async function searchSimilarChunks(query, topN = 10, options = {}) {
+  const { ensureAllDocs = false, minChunksPerDoc = 2 } = options;
+
   if (!query || query.trim().length === 0) {
     addLog('warning', 'Recherche: requête vide');
     return [];
@@ -58,38 +53,34 @@ export async function searchSimilarChunks(query, topN = 5) {
   addLog('info', `Recherche RAG: "${query.substring(0, 50)}..." (top ${topN})`);
 
   try {
-    // 1. Générer l'embedding de la requête
     const queryEmbedding = await generateEmbedding(query);
-
     if (!queryEmbedding || queryEmbedding.length === 0) {
       addLog('error', 'Échec génération embedding pour la requête');
       return [];
     }
 
-    // 2. Calculer la similarité avec tous les vecteurs du store
+    // Calculer scores pour tous les chunks
     const scoredResults = state.vectorStore.map(entry => {
       const chunk = state.chunks.find(c => c.id === entry.chunkId);
-      const score = cosineSimilarity(queryEmbedding, entry.vector);
-
       return {
         chunkId: entry.chunkId,
+        docId: entry.docId || chunk?.docId,
         source: entry.source || chunk?.source || 'Unknown',
         text: chunk?.text || '',
         chunkIndex: chunk?.chunkIndex ?? -1,
-        score: score,
-        vector: entry.vector
+        score: cosineSimilarity(queryEmbedding, entry.vector)
       };
     });
 
-    // 3. Trier par score décroissant
     scoredResults.sort((a, b) => b.score - a.score);
 
-    // 4. Retourner les top N
-    const topResults = scoredResults.slice(0, topN);
+    // Mode standard
+    if (!ensureAllDocs) {
+      return scoredResults.slice(0, topN);
+    }
 
-    addLog('success', `Recherche terminée: ${topResults.length} résultats (meilleur score: ${topResults[0]?.score.toFixed(3) || 'N/A'})`);
-
-    return topResults;
+    // Mode multi-docs avec couverture garantie
+    return ensureDocumentCoverage(scoredResults, topN, minChunksPerDoc);
 
   } catch (error) {
     addLog('error', `Erreur recherche: ${error.message}`);
@@ -98,41 +89,114 @@ export async function searchSimilarChunks(query, topN = 5) {
 }
 
 /**
- * Recherche synchrone (si l'embedding de la query est déjà calculé)
- * 
- * @param {Float32Array|number[]} queryVector - Vecteur de la requête
- * @param {number} topN - Nombre de résultats
- * @returns {Array} - Liste des chunks triés par similarité
+ * Assure la couverture de tous les documents disponibles
  */
-export function searchByVector(queryVector, topN = 5) {
-  if (!queryVector || state.vectorStore.length === 0) {
-    return [];
-  }
-
-  const scoredResults = state.vectorStore.map(entry => {
-    const chunk = state.chunks.find(c => c.id === entry.chunkId);
-    return {
-      chunkId: entry.chunkId,
-      source: entry.source || chunk?.source || 'Unknown',
-      text: chunk?.text || '',
-      chunkIndex: chunk?.chunkIndex ?? -1,
-      score: cosineSimilarity(queryVector, entry.vector)
-    };
+function ensureDocumentCoverage(scoredResults, totalChunks, minChunksPerDoc) {
+  // Grouper par document
+  const byDoc = {};
+  scoredResults.forEach(r => {
+    const docKey = r.source || r.docId || 'unknown';
+    if (!byDoc[docKey]) byDoc[docKey] = [];
+    byDoc[docKey].push(r);
   });
 
-  return scoredResults
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topN);
+  const docNames = Object.keys(byDoc);
+  const numDocs = docNames.length;
+  
+  addLog('info', `Multi-doc coverage: ${numDocs} documents détectés`);
+
+  // Calculer combien de chunks par doc
+  const chunksPerDoc = Math.max(minChunksPerDoc, Math.floor(totalChunks / numDocs));
+  
+  const selected = [];
+
+  // Sélectionner les meilleurs chunks de chaque document
+  docNames.forEach(docName => {
+    const docChunks = byDoc[docName].slice(0, chunksPerDoc);
+    selected.push(...docChunks);
+    addLog('info', `  - ${docName}: ${docChunks.length} chunks sélectionnés`);
+  });
+
+  // Trier par score global
+  selected.sort((a, b) => b.score - a.score);
+
+  return selected.slice(0, totalChunks);
 }
 
 /**
- * Construit le contexte RAG à partir des résultats de recherche
- * Format optimisé pour injection dans le prompt LLM
- * 
- * @param {Array} searchResults - Résultats de searchSimilarChunks
- * @returns {string} - Contexte formaté pour le LLM
+ * Recherche avec couverture multi-documents garantie pour les synthèses
+ */
+export async function searchForSynthesis(query, options = {}) {
+  const { 
+    totalChunks = 15,
+    minChunksPerDoc = 3 
+  } = options;
+
+  return searchSimilarChunks(query, totalChunks, {
+    ensureAllDocs: true,
+    minChunksPerDoc
+  });
+}
+
+/**
+ * Groupe les résultats par document pour le contexte structuré
+ */
+export function groupResultsByDocument(results) {
+  const groups = {};
+  
+  results.forEach((r, idx) => {
+    const docName = r.source || 'Unknown';
+    if (!groups[docName]) {
+      groups[docName] = {
+        docName,
+        chunks: [],
+        avgScore: 0
+      };
+    }
+    groups[docName].chunks.push({
+      ...r,
+      globalIndex: idx + 1
+    });
+  });
+
+  // Calculer score moyen par doc
+  Object.values(groups).forEach(g => {
+    g.avgScore = g.chunks.reduce((sum, c) => sum + c.score, 0) / g.chunks.length;
+  });
+
+  return Object.values(groups).sort((a, b) => b.avgScore - a.avgScore);
+}
+
+/**
+ * Construit le contexte RAG structuré par document
  */
 export function buildRAGContext(searchResults) {
+  if (!searchResults || searchResults.length === 0) {
+    return '';
+  }
+
+  const groups = groupResultsByDocument(searchResults);
+  
+  let context = `### Documents disponibles: ${groups.length}\n\n`;
+
+  groups.forEach((group, docIdx) => {
+    context += `---\n\n`;
+    context += `## Document ${docIdx + 1}: ${group.docName}\n`;
+    context += `(${group.chunks.length} extraits, score moyen: ${(group.avgScore * 100).toFixed(0)}%)\n\n`;
+    
+    group.chunks.forEach(chunk => {
+      context += `**[Doc${docIdx + 1}:Chunk${chunk.chunkIndex + 1}]**\n`;
+      context += `${chunk.text}\n\n`;
+    });
+  });
+
+  return context;
+}
+
+/**
+ * Construit un contexte simplifié (format legacy)
+ */
+export function buildSimpleContext(searchResults) {
   if (!searchResults || searchResults.length === 0) {
     return '';
   }
@@ -144,13 +208,27 @@ export function buildRAGContext(searchResults) {
   return `### Retrieved Context from Documents:\n\n${contextParts.join('\n\n---\n\n')}`;
 }
 
-// Exporter pour utilisation globale (debug console)
+/**
+ * Obtient la liste des documents uniques dans le vector store
+ */
+export function getAvailableDocuments() {
+  const docs = new Set();
+  state.vectorStore.forEach(entry => {
+    const chunk = state.chunks.find(c => c.id === entry.chunkId);
+    docs.add(entry.source || chunk?.source || 'Unknown');
+  });
+  return Array.from(docs);
+}
+
+// Debug global
 if (typeof window !== 'undefined') {
   window.ragSearch = {
     cosineSimilarity,
     searchSimilarChunks,
-    searchByVector,
-    buildRAGContext
+    searchForSynthesis,
+    groupResultsByDocument,
+    buildRAGContext,
+    buildSimpleContext,
+    getAvailableDocuments
   };
 }
-

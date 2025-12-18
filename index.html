@@ -11,6 +11,12 @@
   <!-- PDF.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   
+  <!-- WebLLM CDN -->
+  <script type="module">
+    import * as webllm from 'https://esm.run/@mlc-ai/web-llm';
+    window.webllm = webllm;
+  </script>
+  
   <style>
     body {
       margin: 0;

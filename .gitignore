@@ -32,6 +32,11 @@ PROJECT_REQUIREMENTS.md
 PROJECT.md
 Prompt.md
 docs/
+to do.md
+*.todo
 
 # Test files
 test-*.html
+
+# Cursor
+.cursor/

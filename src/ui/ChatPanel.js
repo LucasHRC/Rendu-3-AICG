@@ -8,6 +8,7 @@ import { getChatHistory, sendMessage, clearChatHistory } from '../llm/chat.js';
 import { parseMarkdown } from '../utils/markdown.js';
 import { setHubContext } from '../agents/HubAgent.js';
 import { showLoadingOverlay, updateLoadingProgress, hideLoadingOverlay } from './LoadingOverlay.js';
+import { isSTTSupported, createSpeechRecognition } from '../voice/speechRecognition.js';
 
 let dualModeEnabled = false;
 let currentView = 'chat'; // 'chat' ou 'agent'
@@ -127,9 +128,25 @@ export function createChatPanel() {
     <!-- Shared input -->
     <div id="chat-input-area" class="flex-shrink-0 p-4 border-t border-gray-100 bg-gray-50">
       <div class="flex gap-2">
-        <input type="text" id="chat-input" placeholder="Ask about your documents..."
-               class="flex-1 px-4 py-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent disabled:bg-gray-100"
-               disabled />
+        <div class="flex-1 relative">
+          <textarea id="chat-input" placeholder="Ask about your documents..." rows="1"
+                    class="w-full px-4 py-3 pr-12 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent disabled:bg-gray-100 resize-none overflow-hidden"
+                    disabled></textarea>
+          <!-- Dictaphone button -->
+          <button id="dictaphone-btn" 
+                  class="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled
+                  title="Mode Dictaphone (transcription vocale)">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+            </svg>
+          </button>
+          <!-- Dictaphone status indicator -->
+          <div id="dictaphone-status" class="hidden absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-2 px-2 py-1 bg-red-50 border border-red-200 rounded-lg">
+            <div class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+            <span class="text-xs text-red-700 font-medium">Écoute...</span>
+          </div>
+        </div>
         <button id="send-btn" class="px-4 py-3 bg-gray-800 text-white rounded-xl hover:bg-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -151,7 +168,9 @@ export function createChatPanel() {
 function createChatColumn(slot) {
   const isPrimary = slot === 'primary';
   const sortedModels = getSortedModels();
-  const defaultModel = sortedModels[0];
+  // Utiliser Llama 3.2 3B comme défaut (recommandé)
+  const llama3B = MODEL_CATALOG.find(m => m.id === 'Llama-3.2-3B-Instruct-q4f16_1-MLC');
+  const defaultModel = llama3B || sortedModels.find(m => m.recommended) || sortedModels[0];
   
   return `
     <div id="chat-column-${slot}" class="flex-1 flex flex-col min-h-0 border border-gray-200 rounded-xl overflow-hidden">
@@ -357,7 +376,131 @@ function setupChatEvents(panel) {
       e.preventDefault();
       handleSend();
     }
+    // Auto-resize textarea
+    if (input.tagName === 'TEXTAREA') {
+      input.style.height = 'auto';
+      input.style.height = input.scrollHeight + 'px';
+    }
   });
+
+  // Mode Dictaphone (STT pour transcrire dans le chat)
+  let dictaphoneRecognition = null;
+  let dictaphoneActive = false;
+  const dictaphoneBtn = panel.querySelector('#dictaphone-btn');
+  const dictaphoneStatus = panel.querySelector('#dictaphone-status');
+
+  if (dictaphoneBtn) {
+    // Vérifier support STT
+    if (!isSTTSupported()) {
+      dictaphoneBtn.disabled = true;
+      dictaphoneBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      dictaphoneBtn.title = 'Reconnaissance vocale non disponible (utilisez Chrome/Edge)';
+    } else {
+      dictaphoneBtn.addEventListener('click', () => {
+        if (dictaphoneActive) {
+          // Arrêter la transcription
+          if (dictaphoneRecognition) {
+            try {
+              dictaphoneRecognition.stop();
+            } catch (e) {
+              console.warn('[Dictaphone] Error stopping:', e);
+            }
+            dictaphoneRecognition = null;
+          }
+          dictaphoneActive = false;
+          dictaphoneBtn.classList.remove('bg-red-500', 'text-red-600');
+          dictaphoneBtn.classList.add('text-gray-400');
+          dictaphoneStatus?.classList.add('hidden');
+          addLog('info', 'Dictaphone arrêté');
+        } else {
+          // Démarrer la transcription
+          dictaphoneActive = true;
+          dictaphoneBtn.classList.remove('text-gray-400');
+          dictaphoneBtn.classList.add('bg-red-500', 'text-red-600');
+          dictaphoneStatus?.classList.remove('hidden');
+          addLog('info', 'Dictaphone activé - parlez maintenant');
+
+          dictaphoneRecognition = createSpeechRecognition({
+            lang: 'fr-FR',
+            continuous: true,
+            interimResults: true,
+            onResult: ({ interim, final, isFinal }) => {
+              if (isFinal && final && final.trim()) {
+                // ACCUMULER au lieu de remplacer
+                const currentText = input.value.trim();
+                const newText = currentText 
+                  ? `${currentText} ${final}`  // Ajouter avec espace
+                  : final;  // Première transcription
+                
+                input.value = newText;
+                
+                // Auto-resize textarea
+                if (input.tagName === 'TEXTAREA') {
+                  input.style.height = 'auto';
+                  input.style.height = input.scrollHeight + 'px';
+                }
+                
+                // Focus pour permettre modification
+                input.focus();
+                input.scrollTop = input.scrollHeight;
+                addLog('success', `Transcription ajoutée: "${final.substring(0, 50)}..."`);
+              } else if (!isFinal && interim && interim.trim()) {
+                // Pour l'interim, on affiche : texte accumulé + interim
+                const currentText = input.value.trim();
+                // Extraire le dernier mot final si existe pour le remplacer par interim
+                const parts = currentText.split(/\s+/);
+                const lastPart = parts[parts.length - 1];
+                
+                // Si le dernier mot semble être un interim précédent, le remplacer
+                // Sinon, ajouter l'interim
+                if (interim.startsWith(lastPart) || lastPart.length < 3) {
+                  parts[parts.length - 1] = interim;
+                  input.value = parts.join(' ');
+                } else {
+                  input.value = currentText ? `${currentText} ${interim}` : interim;
+                }
+                
+                if (input.tagName === 'TEXTAREA') {
+                  input.style.height = 'auto';
+                  input.style.height = input.scrollHeight + 'px';
+                }
+              }
+            },
+            onError: (error) => {
+              console.error('[Dictaphone] Error:', error);
+              addLog('error', `Erreur dictaphone: ${error}`);
+              // Reset UI
+              dictaphoneActive = false;
+              dictaphoneBtn.classList.remove('bg-red-500', 'text-red-600');
+              dictaphoneBtn.classList.add('text-gray-400');
+              dictaphoneStatus?.classList.add('hidden');
+            },
+            onEnd: () => {
+              // Si arrêté inattendu, réinitialiser
+              if (dictaphoneActive) {
+                console.log('[Dictaphone] Recognition ended, resetting...');
+                dictaphoneActive = false;
+                dictaphoneBtn.classList.remove('bg-red-500', 'text-red-600');
+                dictaphoneBtn.classList.add('text-gray-400');
+                dictaphoneStatus?.classList.add('hidden');
+              }
+            }
+          });
+
+          try {
+            dictaphoneRecognition.start();
+          } catch (e) {
+            console.error('[Dictaphone] Failed to start:', e);
+            addLog('error', 'Impossible de démarrer le dictaphone');
+            dictaphoneActive = false;
+            dictaphoneBtn.classList.remove('bg-red-500', 'text-red-600');
+            dictaphoneBtn.classList.add('text-gray-400');
+            dictaphoneStatus?.classList.add('hidden');
+          }
+        }
+      });
+    }
+  }
 
   clearBtn?.addEventListener('click', () => {
     if (confirm('Clear all chat history?')) {
@@ -586,12 +729,18 @@ function getSettings() {
 function updateInputState() {
   const input = document.getElementById('chat-input');
   const sendBtn = document.getElementById('send-btn');
+  const dictaphoneBtn = document.getElementById('dictaphone-btn');
   const agentBtns = document.querySelectorAll('.agent-mode-btn');
 
   const anyReady = isModelReady('primary') || isModelReady('secondary');
 
   if (input) input.disabled = !anyReady;
-  if (sendBtn) sendBtn.disabled = !anyReady;
+  if (sendBtn) sendBtn.disabled = !anyReady || !input?.value.trim();
+  
+  // Activer/désactiver dictaphone selon disponibilité modèle
+  if (dictaphoneBtn && isSTTSupported()) {
+    dictaphoneBtn.disabled = !anyReady;
+  }
 
   // Vérifier si un modèle 3B+ est chargé via le flag agentCompatible
   const loadedModelId = getLoadedModel('primary') || getLoadedModel('secondary');

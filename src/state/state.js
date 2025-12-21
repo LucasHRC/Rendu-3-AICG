@@ -23,7 +23,10 @@ export const state = {
     temperature: 0.7,
     systemPrompt: 'You are an academic researcher assistant. Help users understand research papers and generate literature reviews.',
     topN: 5, // Nombre de chunks à récupérer pour RAG
-    debugMode: false
+    debugMode: false,
+    sttLang: 'fr-FR', // Langue pour Speech-to-Text
+    ttsRate: 1.0, // Vitesse TTS
+    silenceDelay: 2000 // Délai silence en ms pour mode conversation
   },
   
   // État du modèle LLM

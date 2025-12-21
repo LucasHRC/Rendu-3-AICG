@@ -12,6 +12,13 @@ const chatHistories = {
   secondary: []
 };
 
+/**
+ * Retourne la référence directe à l'historique (pour partage avec HandsFree)
+ */
+export function getChatHistoryRef(slot = 'primary') {
+  return chatHistories[slot];
+}
+
 // System prompt en français - naturel et académique
 const DEFAULT_SYSTEM_PROMPT = `Tu es un assistant de recherche académique francophone. Tu analyses des documents scientifiques et rédiges des synthèses claires.
 

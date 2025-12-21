@@ -4,20 +4,27 @@
 
 import { addLog } from '../state/state.js';
 
+// Modèles dédiés par mode
+export const CHAT_MODEL = null; // Le chat utilise le modèle sélectionné par l'utilisateur
+export const HANDS_FREE_MODEL = 'Qwen 4B Instruct'; // Modèle dédié Hands-Free (string exact comme demandé)
+
 // Support 2 engines pour comparaison
 const engines = {
   primary: null,
-  secondary: null
+  secondary: null,
+  handsfree: null // Slot dédié pour Hands-Free
 };
 
 const loadingState = {
   primary: false,
-  secondary: false
+  secondary: false,
+  handsfree: false
 };
 
 const loadedModels = {
   primary: null,
-  secondary: null
+  secondary: null,
+  handsfree: null
 };
 
 // Catalogue des modèles avec notation sur 5 critères
@@ -75,7 +82,8 @@ export const MODEL_CATALOG = [
     params: '3.8B',
     scores: { quality: 1.6, coherence: 1.5, agentic: 1.4, latency: 1.7, context: 1.3 },
     agentCompatible: true,
-    recommended: false
+    recommended: false,
+    oralOptimized: true
   },
   {
     id: 'Qwen2.5-3B-Instruct-q4f16_1-MLC',
@@ -84,7 +92,8 @@ export const MODEL_CATALOG = [
     params: '3B',
     scores: { quality: 1.4, coherence: 1.3, agentic: 1.2, latency: 1.8, context: 0.8 },
     agentCompatible: true,
-    recommended: false
+    recommended: false,
+    oralOptimized: true
   },
   {
     id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
@@ -93,7 +102,8 @@ export const MODEL_CATALOG = [
     params: '3B',
     scores: { quality: 1.3, coherence: 1.3, agentic: 1.2, latency: 1.8, context: 0.6 },
     agentCompatible: true,
-    recommended: false
+    recommended: true,
+    oralOptimized: true
   },
   {
     id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
@@ -102,7 +112,8 @@ export const MODEL_CATALOG = [
     params: '1B',
     scores: { quality: 1.0, coherence: 1.0, agentic: 0.8, latency: 2.0, context: 0.2 },
     agentCompatible: false,
-    recommended: false
+    recommended: false,
+    oralOptimized: true
   },
   {
     id: 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC',
@@ -138,6 +149,24 @@ export function getSortedModels() {
   return [...MODEL_CATALOG].sort((a, b) => 
     calculateTotalScore(b.scores) - calculateTotalScore(a.scores)
   );
+}
+
+/**
+ * Retourne les modèles optimisés pour l'oral (4-5B max)
+ * Triés par score oral (latence + qualité)
+ */
+export function getOralOptimizedModels() {
+  return MODEL_CATALOG
+    .filter(m => {
+      const paramCount = parseFloat(m.params.replace('B', ''));
+      return m.oralOptimized && paramCount <= 5;
+    })
+    .sort((a, b) => {
+      // Trier par score oral (latence + qualité)
+      const scoreA = a.scores.latency + a.scores.quality;
+      const scoreB = b.scores.latency + b.scores.quality;
+      return scoreB - scoreA;
+    });
 }
 
 /**

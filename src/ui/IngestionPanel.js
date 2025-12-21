@@ -21,7 +21,7 @@ export function createIngestionPanel() {
   header.className = 'border-b border-gray-100 px-4 py-3 flex-shrink-0';
   header.innerHTML = `
     <div class="flex items-center justify-between mb-3">
-      <h2 class="text-sm font-bold text-gray-900">Vector Store & Console</h2>
+      <h2 class="text-sm font-bold text-gray-900">Vector Store</h2>
       <div class="flex items-center gap-2">
         <label class="px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded-lg hover:bg-blue-200 transition-colors cursor-pointer">
           Import
@@ -49,9 +49,6 @@ export function createIngestionPanel() {
       </button>
       <button data-tab="stats" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100">
         Stats
-      </button>
-      <button data-tab="console" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100">
-        Console
       </button>
       <button data-tab="debug" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100">
         Debug
@@ -101,10 +98,6 @@ export function createIngestionPanel() {
     renderCurrentTab();
     updateEmbeddingUI();
     
-    // Initialiser les logs
-    window.addEventListener('state:logAdded', () => {
-      if (currentTab === 'console') renderConsoleTab();
-    });
   }, 0);
   
   // Événements
@@ -265,7 +258,6 @@ function renderCurrentTab() {
     case 'chunks': renderChunksTab(); break;
     case 'vectors': renderVectorsTab(); break;
     case 'stats': renderStatsTab(); break;
-    case 'console': renderConsoleTab(); break;
     case 'debug': renderDebugTab(); break;
     case 'search': renderSearchTab(); break;
   }
@@ -442,44 +434,6 @@ function renderStatsTab() {
       </div>
     </div>
   `;
-}
-
-function renderConsoleTab() {
-  const content = document.getElementById('ingestion-content');
-  if (!content) return;
-  
-  content.innerHTML = `
-    <div class="bg-gray-900 rounded-xl p-3 h-full overflow-y-auto font-mono text-xs" id="console-logs">
-    </div>
-  `;
-  
-  const logsContainer = content.querySelector('#console-logs');
-  
-  state.logs.forEach(log => {
-    const entry = document.createElement('div');
-    entry.className = 'flex items-start gap-2 py-0.5';
-    
-    const time = log.timestamp.toLocaleTimeString('en-US', { 
-      hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' 
-    });
-    
-    const colors = {
-      info: 'text-blue-400',
-      success: 'text-green-400',
-      warning: 'text-yellow-400',
-      error: 'text-red-400'
-    };
-    
-    entry.innerHTML = `
-      <span class="text-gray-500">${time}</span>
-      <span class="${colors[log.level] || 'text-gray-400'}">●</span>
-      <span class="text-gray-300 flex-1">${log.message}</span>
-    `;
-    
-    logsContainer.appendChild(entry);
-  });
-  
-  logsContainer.scrollTop = logsContainer.scrollHeight;
 }
 
 function renderDebugTab() {

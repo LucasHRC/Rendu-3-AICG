@@ -1,0 +1,8 @@
+// Temporairement désactivé - installer tailwindcss d'abord avec: npm install -D tailwindcss postcss autoprefixer
+// export default {
+//   plugins: {
+//     tailwindcss: {},
+//     autoprefixer: {},
+//   },
+// }
+

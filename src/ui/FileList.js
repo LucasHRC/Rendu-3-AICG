@@ -300,10 +300,10 @@ function showRenameModal(doc) {
       newName = customValue;
     } else {
       const selectedRadio = modal.querySelector('input[name="rename-option"]:checked');
-      newName = selectedRadio ? selectedRadio.value : '';
+      newName = selectedRadio ? selectedRadio.value : currentName;
     }
 
-    if (newName && newName !== currentName) {
+    if (newName !== currentName) {
       doc.displayName = newName;
       
       // Si des chunks existent, rechunker automatiquement

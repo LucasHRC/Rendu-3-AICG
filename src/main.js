@@ -10,6 +10,8 @@ import { createIngestionPanel } from './ui/IngestionPanel.js';
 import { createChatPanel } from './ui/ChatPanel.js';
 import { createSystemControls } from './ui/SystemControls.js';
 import { createHistoryPanel } from './ui/HistoryPanel.js';
+import { createHandsFreePanel, toggleHandsFree, isHandsFreeActive, stopTTS } from './ui/HandsFreePanel.js';
+import { showSettingsPanel } from './ui/SettingsPanel.js';
 // VisualizationTabs removed - agents now integrated in ChatPanel
 
 // Import des agents pour enregistrer leurs event listeners
@@ -66,7 +68,25 @@ function createMainUI(container) {
           <button data-main-tab="chat" class="main-tab px-4 py-2 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900">
             Chat
           </button>
+          <button data-main-tab="handsfree" class="main-tab px-4 py-2 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900">
+            <span class="flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+              </svg>
+              Hands-Free
+            </span>
+          </button>
         </div>
+      </div>
+      
+      <!-- Right side: Settings button -->
+      <div class="flex items-center gap-2">
+        <button id="settings-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Paramètres">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+        </button>
       </div>
       
       <div id="header-stats" class="flex items-center gap-5 text-sm">
@@ -94,15 +114,22 @@ function createMainUI(container) {
   container.appendChild(header);
   container.appendChild(mainContainer);
   
-  // Creer les deux vues
+  // Creer les trois vues
   createDocumentsView(mainContainer);
   createChatView(mainContainer);
+  createHandsFreeView(mainContainer);
   
   // Setup tabs
   setupMainTabs(header);
   setupBulkActions();
   updateHeaderStats();
   setInterval(updateHeaderStats, 1000);
+  
+  // Setup settings button
+  const settingsBtn = document.getElementById('settings-btn');
+  settingsBtn?.addEventListener('click', () => {
+    showSettingsPanel();
+  });
   
   // Afficher la vue par defaut
   showTab('documents');
@@ -209,6 +236,77 @@ function createChatView(container) {
 }
 
 /**
+ * Crée la vue Hands-Free
+ */
+function createHandsFreeView(container) {
+  const view = document.createElement('div');
+  view.id = 'handsfree-view';
+  view.className = 'flex-1 flex gap-4 min-h-0 hidden';
+  
+  // Colonne principale : Hands-Free Panel
+  const mainColumn = document.createElement('div');
+  mainColumn.className = 'flex-1 flex flex-col min-h-0 max-w-2xl mx-auto';
+  mainColumn.appendChild(createHandsFreePanel());
+  
+  // Colonne droite : System Controls + RAG Status
+  const rightColumn = document.createElement('div');
+  rightColumn.className = 'w-80 flex-shrink-0 flex flex-col gap-3 min-h-0 overflow-y-auto';
+  rightColumn.appendChild(createSystemControls());
+  
+  // RAG Status compact
+  const ragStatus = document.createElement('div');
+  ragStatus.className = 'bg-white rounded-xl border border-gray-200 p-4';
+  ragStatus.innerHTML = `
+    <h3 class="text-sm font-bold text-gray-900 mb-3">Knowledge Base</h3>
+    <div class="space-y-2">
+      <div class="flex items-center justify-between text-xs">
+        <span class="text-gray-500">Documents</span>
+        <span id="hf-rag-docs" class="font-semibold text-gray-900">0</span>
+      </div>
+      <div class="flex items-center justify-between text-xs">
+        <span class="text-gray-500">Chunks</span>
+        <span id="hf-rag-chunks" class="font-semibold text-gray-900">0</span>
+      </div>
+      <div class="flex items-center justify-between text-xs">
+        <span class="text-gray-500">Embeddings</span>
+        <span id="hf-rag-vectors" class="font-semibold text-gray-900">0</span>
+      </div>
+    </div>
+  `;
+  rightColumn.appendChild(ragStatus);
+  
+  // Shortcuts help
+  const shortcutsHelp = document.createElement('div');
+  shortcutsHelp.className = 'bg-white rounded-xl border border-gray-200 p-4';
+  shortcutsHelp.innerHTML = `
+    <h3 class="text-sm font-bold text-gray-900 mb-3">Raccourcis clavier</h3>
+    <div class="space-y-2 text-xs">
+      <div class="flex items-center justify-between">
+        <span class="text-gray-500">Toggle ON/OFF</span>
+        <kbd class="px-2 py-0.5 bg-gray-100 rounded text-gray-700 font-mono">Espace</kbd>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-gray-500">Stop / Annuler</span>
+        <kbd class="px-2 py-0.5 bg-gray-100 rounded text-gray-700 font-mono">Echap</kbd>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-gray-500">Envoyer</span>
+        <kbd class="px-2 py-0.5 bg-gray-100 rounded text-gray-700 font-mono">Ctrl+Entrée</kbd>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-gray-500">Mute micro</span>
+        <kbd class="px-2 py-0.5 bg-gray-100 rounded text-gray-700 font-mono">M</kbd>
+      </div>
+    </div>
+  `;
+  rightColumn.appendChild(shortcutsHelp);
+  
+  view.appendChild(mainColumn);
+  view.appendChild(rightColumn);
+  container.appendChild(view);
+}
+
+/**
  * Setup onglets principaux
  */
 function setupMainTabs(header) {
@@ -238,14 +336,22 @@ function showTab(tabName) {
   
   const docsView = document.getElementById('documents-view');
   const chatView = document.getElementById('chat-view');
+  const handsfreeView = document.getElementById('handsfree-view');
   
+  // Cacher toutes les vues
+  docsView?.classList.add('hidden');
+  chatView?.classList.add('hidden');
+  handsfreeView?.classList.add('hidden');
+  
+  // Afficher la vue demandée
   if (tabName === 'documents') {
     docsView?.classList.remove('hidden');
-    chatView?.classList.add('hidden');
-  } else {
-    docsView?.classList.add('hidden');
+  } else if (tabName === 'chat') {
     chatView?.classList.remove('hidden');
     updateRAGStatus();
+  } else if (tabName === 'handsfree') {
+    handsfreeView?.classList.remove('hidden');
+    updateHandsFreeRAGStatus();
   }
 }
 
@@ -287,3 +393,65 @@ function updateRAGStatus() {
   if (ragChunks) ragChunks.textContent = state.chunks.length;
   if (ragVectors) ragVectors.textContent = state.vectorStore.length;
 }
+
+/**
+ * Met à jour le status RAG dans la vue Hands-Free
+ */
+function updateHandsFreeRAGStatus() {
+  const ragDocs = document.getElementById('hf-rag-docs');
+  const ragChunks = document.getElementById('hf-rag-chunks');
+  const ragVectors = document.getElementById('hf-rag-vectors');
+  
+  if (ragDocs) ragDocs.textContent = state.docs.length;
+  if (ragChunks) ragChunks.textContent = state.chunks.length;
+  if (ragVectors) ragVectors.textContent = state.vectorStore.length;
+}
+
+/**
+ * Setup raccourcis clavier globaux pour Hands-Free
+ */
+function setupKeyboardShortcuts() {
+  document.addEventListener('keydown', (e) => {
+    // Ne pas interférer avec les inputs
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      // Sauf pour Escape
+      if (e.key !== 'Escape') return;
+    }
+    
+    // Seulement si on est sur l'onglet Hands-Free
+    if (currentTab !== 'handsfree') return;
+    
+    switch (e.key) {
+      case ' ': // Espace - Toggle
+        if (e.target.tagName !== 'BUTTON') {
+          e.preventDefault();
+          toggleHandsFree();
+        }
+        break;
+      case 'Escape': // Echap - Stop / Annuler
+        e.preventDefault();
+        stopTTS();
+        // Annuler aussi le compte à rebours si actif
+        const countdownEl = document.getElementById('hf-countdown');
+        const cancelBtn = document.getElementById('hf-cancel-btn');
+        if (countdownEl && !countdownEl.classList.contains('hidden')) {
+          // Simuler un clic sur le bouton annuler
+          if (cancelBtn) {
+            cancelBtn.click();
+          }
+        }
+        break;
+      case 'm':
+      case 'M': // Mute (toggle)
+        if (!e.ctrlKey && !e.metaKey) {
+          toggleHandsFree();
+        }
+        break;
+    }
+  });
+}
+
+// Initialiser les raccourcis après le DOM
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(setupKeyboardShortcuts, 100);
+});

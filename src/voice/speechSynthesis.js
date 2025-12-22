@@ -93,7 +93,13 @@ export function createTTSManager(options = {}) {
       // Arrêter toute lecture en cours
       this.stop();
       
-      await loadVoice();
+      const voice = await loadVoice();
+      
+      if (!voice) {
+        console.error('[TTS] Cannot load voice');
+        onError('no-voice-available');
+        return Promise.resolve();
+      }
       
       return new Promise((resolve, reject) => {
         currentUtterance = new SpeechSynthesisUtterance(text);
@@ -144,13 +150,27 @@ export function createTTSManager(options = {}) {
         setTimeout(() => {
           synth.speak(currentUtterance);
           
-          // Chrome bug: check if actually speaking after a delay
+          // Vérification renforcée avec retry automatique
           setTimeout(() => {
             if (!synth.speaking && currentUtterance) {
               console.warn('[TTS] Speech not started, retrying...');
-              synth.speak(currentUtterance);
+              synth.cancel();
+              setTimeout(() => {
+                synth.speak(currentUtterance);
+                
+                // Dernière vérification après retry
+                setTimeout(() => {
+                  if (!synth.speaking && currentUtterance) {
+                    console.error('[TTS] Speech failed to start after retries');
+                    onError('speech-not-started');
+                    // Ne pas rejeter la promesse pour éviter les erreurs non gérées
+                    // mais signaler l'erreur via onError
+                    resolve();
+                  }
+                }, 200);
+              }, 50);
             }
-          }, 100);
+          }, 150);
         }, 10);
       });
     },

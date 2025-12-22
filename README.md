@@ -61,6 +61,99 @@ Le selecteur de modeles affiche 10 modeles tries par score global. Chaque modele
 
 Les modeles compatibles avec les agents (3B+) affichent un badge. Au survol, les 5 criteres detailles apparaissent avec barres de progression colorees.
 
+## Mode Hands-Free
+
+Le mode Hands-Free permet une conversation vocale complète avec l'assistant.
+
+### Fonctionnalités
+
+- **Barge-in automatique** : Détection intelligente de la voix utilisateur vs TTS via corrélation NCC
+- **TTS en streaming** : Lecture phrase par phrase avec bulle animée
+- **Interruption immédiate** : Si l'utilisateur parle pendant le TTS, arrêt automatique
+- **Modèle dédié** : Utilise "Qwen 4B Instruct" optimisé pour réponses orales courtes
+
+### Installation et lancement
+
+1. **Installer les dépendances du serveur TTS** :
+   ```bash
+   cd tts-server && npm install
+   ```
+
+2. **Lancer le serveur TTS** (dans un terminal) :
+   ```bash
+   cd tts-server && npm start
+   ```
+   Le serveur écoute sur `http://localhost:3001/api/tts`
+
+3. **Lancer l'application** (dans un autre terminal) :
+   ```bash
+   npm run dev
+   ```
+
+   **OU lancer les deux en parallèle** :
+   ```bash
+   npm run dev:all
+   ```
+
+### Configuration
+
+- **Endpoint TTS** : Configuré dans `src/ui/HandsFreePanel.js` (ligne ~264)
+- **Seuils NCC** : Ajustables dans `src/audio/EchoBargeIn.js` (voir section "Réglages" ci-dessous)
+- **Fallback** : Si le serveur TTS n'est pas disponible, utilise `speechSynthesis` (half-duplex)
+
+### Réglages du barge-in
+
+Les seuils sont dans `src/audio/EchoBargeIn.js` (constructeur). Ajustez selon votre environnement :
+
+| Paramètre | Défaut | Description | Ajustement |
+|-----------|--------|-------------|------------|
+| `THRESH_RMS` | 0.012 | Seuil VAD (détection voix) | **0.008** si ne détecte pas votre voix<br>**0.020** si coupe trop facilement |
+| `THRESH_NCC` | 0.2 | Seuil corrélation (utilisateur vs TTS) | **0.15** si coupe même sans parler<br>**0.25** si ne coupe pas quand vous parlez |
+| `HANGOVER_MS` | 300 | Anti-oscillation (ms) | **200** pour plus réactif<br>**400** si oscillations |
+| `FRAME_SIZE` | 2048 | Taille frame audio | **1024** pour plus réactif (mais plus bruité) |
+| `VOICE_STREAK_THRESH` | 2 | Frames consécutives avec voix | **3** si faux positifs fréquents |
+
+**Debug** : Activez les logs détaillés dans la console :
+```javascript
+window.DEBUG_ECHO_BARGE_IN = true;
+```
+
+### Tests et dépannage
+
+1. **Test rapide** :
+   ```bash
+   # Terminal 1: Serveur TTS
+   cd tts-server && npm install && npm start
+   
+   # Terminal 2: Front
+   npm run dev
+   ```
+
+2. **Vérifier l'endpoint TTS** :
+   - Ouvrir `http://localhost:3001/api/tts?text=bonjour` dans le navigateur
+   - Doit télécharger un fichier WAV
+
+3. **Si ça ne coupe pas quand vous parlez** :
+   - Vérifier que `attachTTSOutput(audioEl)` est appelé (logs console)
+   - Baisser `THRESH_RMS` à 0.008
+   - Vérifier que NCC change (debug activé)
+
+4. **Si ça coupe trop facilement** :
+   - Monter `THRESH_RMS` à 0.020
+   - Descendre `THRESH_NCC` à 0.15
+   - Monter `VOICE_STREAK_THRESH` à 3
+
+5. **Audio double/écho** :
+   - L'élément audio est automatiquement muté (`audioEl.muted = true`)
+   - La sortie se fait uniquement via WebAudio
+
+### Notes techniques
+
+- Le serveur TTS utilise `say` (macOS) + `afconvert` pour générer des fichiers WAV
+- Le barge-in utilise la corrélation normalisée (NCC) entre le signal micro et la référence TTS
+- EchoCancellation/noiseSuppression activés automatiquement sur le micro
+- Debounce voix intégré (évite faux positifs)
+
 ## Stack Technique
 
 | Composant | Technologie |

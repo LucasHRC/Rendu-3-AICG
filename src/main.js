@@ -245,7 +245,7 @@ function createHandsFreeView(container) {
   
   // Colonne principale : Hands-Free Panel
   const mainColumn = document.createElement('div');
-  mainColumn.className = 'flex-1 flex flex-col min-h-0 max-w-2xl mx-auto';
+  mainColumn.className = 'flex-1 flex flex-col min-h-0 max-w-6xl mx-auto w-full px-4';
   mainColumn.appendChild(createHandsFreePanel());
   
   // Colonne droite : System Controls + RAG Status

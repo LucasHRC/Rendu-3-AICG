@@ -6,6 +6,7 @@ import { addLog, state } from '../state/state.js';
 import { initWebLLM, isModelReady, isModelLoading, getLoadedModel, isDualMode, MODEL_CATALOG, calculateTotalScore, getScoreColor, getSortedModels } from '../llm/webllm.js';
 import { getChatHistory, sendMessage, clearChatHistory } from '../llm/chat.js';
 import { parseMarkdown } from '../utils/markdown.js';
+import { showChunkViewer } from './ChunkViewer.js';
 import { setHubContext } from '../agents/HubAgent.js';
 import { showLoadingOverlay, updateLoadingProgress, hideLoadingOverlay } from './LoadingOverlay.js';
 import { isSTTSupported, createSpeechRecognition } from '../voice/speechRecognition.js';
@@ -160,6 +161,9 @@ export function createChatPanel() {
 
   window.addEventListener('chat:messageAdded', (e) => renderMessages(e.detail.slot));
   window.addEventListener('chat:cleared', (e) => renderMessages(e.detail?.slot || 'primary'));
+  
+  // Exposer showChunkViewer globalement pour les onclick
+  window.showChunkViewer = showChunkViewer;
   window.addEventListener('webllm:ready', (e) => updateModelStatus(e.detail.slot));
 
   return panel;
@@ -788,7 +792,7 @@ function renderMessages(slot = 'primary') {
   container.scrollTop = container.scrollHeight;
 }
 
-function createMessageHTML(msg) {
+function createMessageHTML(msg, msgIdx) {
   const isUser = msg.role === 'user';
   const time = msg.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
@@ -797,13 +801,27 @@ function createMessageHTML(msg) {
     sourcesHTML = `
       <details class="mt-2 text-xs">
         <summary class="cursor-pointer text-gray-500 hover:text-gray-700 font-medium">
-          ${msg.sources.length} source(s)
+          ${msg.sources.length} source(s) - Cliquez pour voir les détails
         </summary>
-        <div class="mt-1 space-y-1 pl-2 border-l-2 border-gray-200">
+        <div class="mt-2 space-y-2 pl-2 border-l-2 border-gray-200">
           ${msg.sources.map((s, i) => `
-            <div class="bg-gray-50 p-1.5 rounded text-xs">
-              <span class="font-semibold text-gray-700">[${i + 1}] ${s.source}</span>
-              <span class="text-gray-500 ml-1">${(s.score * 100).toFixed(0)}%</span>
+            <div class="bg-gray-50 p-2 rounded-lg border border-gray-200">
+              <div class="flex items-center justify-between mb-1">
+                <span class="font-semibold text-gray-700">
+                  [${i + 1}] ${s.docName || s.source} - Doc${s.docIndex || '?'}:Chunk${s.chunkIndex || '?'}
+                </span>
+                ${s.score ? `<span class="text-gray-500 text-xs">${(s.score * 100).toFixed(0)}%</span>` : ''}
+              </div>
+              ${s.text ? `
+                <p class="text-gray-600 text-xs line-clamp-2 mb-2">${s.text.substring(0, 150)}${s.text.length > 150 ? '...' : ''}</p>
+              ` : ''}
+              <button 
+                data-msg-idx="${msgIdx}"
+                data-source-index="${i}"
+                class="chunk-viewer-btn text-xs text-blue-600 hover:text-blue-800 font-medium underline"
+              >
+                Voir le chunk complet →
+              </button>
             </div>
           `).join('')}
         </div>

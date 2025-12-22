@@ -5,9 +5,10 @@
 import { isSTTSupported, createSpeechRecognition, createSpeechDetector } from '../voice/speechRecognition.js';
 import { isTTSSupported, createTTSManager, getVoices, getBestVoicesForLang, SUPPORTED_LANGUAGES } from '../voice/speechSynthesis.js';
 import { getKokoroVoices, initKokoroTTS, isKokoroReady } from '../voice/kokoroTTS.js';
-import { getChatHistoryRef, sendMessage } from '../llm/chat.js';
+import { getChatHistoryRef, sendMessage, addMessage } from '../llm/chat.js';
 import { isModelReady, initWebLLM, getLoadedModel, getOralOptimizedModels } from '../llm/webllm.js';
 import { parseMarkdown } from '../utils/markdown.js';
+import { showChunkViewer } from './ChunkViewer.js';
 
 // États possibles
 const STATES = {
@@ -25,22 +26,35 @@ let ttsManager = null;
 let speechDetector = null;
 let currentTranscript = '';
 let silenceTimeout = null;
-const SILENCE_DELAY = 2000; // 2s de silence avant envoi auto
+const SILENCE_DELAY = 3000; // 3s de silence avant envoi auto
 let useKokoroTTS = false; // Utiliser Kokoro TTS ou voix native
 let interruptCountdownInterval = null; // Interval pour le compte à rebours d'interruption
+let spaceKeyListener = null; // Listener pour raccourci ESPACE
 
-// System prompt optimisé pour réponses orales courtes (2-4 phrases max)
+// System prompt optimisé pour réponses orales avec citations et diversité
 const ORAL_SYSTEM_PROMPT = `Tu es un assistant vocal conversationnel. Réponds en français.
 
-RÈGLES STRICTES :
-- 2-4 phrases maximum
-- Ton oral, direct, clair
-- Pas de listes longues
-- Si information manque : finir par 1 question courte
-- Ne pas afficher de raisonnement interne
+RÈGLES STRICTES (PRIORITÉ ABSOLUE) :
+- MAXIMUM 2-3 phrases courtes (30-50 mots total)
+- Réponse complète mais ultra-synthétique
+- Ton oral, direct, naturel
+- Pas de listes, pas de markdown, pas de structure complexe
+- Si information manque : finir par 1 question courte (5-10 mots max)
+- Ne JAMAIS couper ta réponse au milieu d'une phrase
 - Utilise des expressions naturelles ("ah je vois", "d'accord", "effectivement")
 
-Sois synthétique et percutant. Évite les longues explications.`;
+CITATIONS ET DIVERSITÉ :
+- Cite UNE source [Doc1:Chunk2] par phrase importante (maximum 2 citations)
+- Privilégie la diversité : cherche dans plusieurs documents différents
+- Si plusieurs documents : mentionne-les brièvement en 1 phrase
+
+EXEMPLE BONNE RÉPONSE :
+"Ah je vois, Wavestone se présente comme une entreprise centrée sur l'humain [Doc1:Chunk5]. Ils sont engagés dans la responsabilité sociale et environnementale [Doc1:Chunk6]."
+
+EXEMPLE MAUVAISE RÉPONSE (TROP LONGUE) :
+"Il semble que vous cherchiez des informations sur Wavestone, une entreprise qui se déclare éthique et citoyenne. Voici les points clés que j'ai trouvés dans le document : * Wavestone se présente comme..."
+
+Sois ultra-synthétique, direct, et termine toujours ta phrase complètement.`;
 
 // Config par défaut
 let voiceConfig = {
@@ -57,14 +71,14 @@ let voiceConfig = {
 export function createHandsFreePanel() {
   const panel = document.createElement('div');
   panel.id = 'handsfree-panel';
-  panel.className = 'flex flex-row h-full bg-white rounded-xl border border-gray-200 overflow-hidden';
+  panel.className = 'flex flex-col md:flex-row max-h-[85vh] bg-white rounded-xl border border-gray-200 overflow-hidden';
 
   const sttSupported = isSTTSupported();
   const ttsSupported = isTTSSupported();
 
   panel.innerHTML = `
     <!-- Colonne gauche : Micro et contrôles -->
-    <div class="flex flex-col w-80 border-r border-gray-200 flex-shrink-0">
+    <div class="flex flex-col w-full md:w-80 border-r-0 md:border-r border-gray-200 border-b md:border-b-0 flex-shrink-0 max-h-[40vh] md:max-h-none overflow-y-auto">
       <!-- Header -->
       <div class="flex-shrink-0 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-indigo-50">
         <div class="flex items-center gap-3">
@@ -77,6 +91,28 @@ export function createHandsFreePanel() {
             <h2 class="text-sm font-bold text-gray-900">Mode Hands-Free</h2>
             <p id="hf-status-text" class="text-xs text-gray-500">Inactif</p>
           </div>
+        </div>
+      </div>
+
+      <!-- Indicateur raccourci ESPACE (quand TTS parle) -->
+      <div id="hf-space-hint" class="hidden px-4 py-2 bg-blue-50 border-b border-blue-200">
+        <div class="flex items-center gap-2 text-xs text-blue-700">
+          <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16l-4-4m0 0l4-4m-4 4h18"/>
+          </svg>
+          <span>Appuyez sur <kbd class="px-1.5 py-0.5 bg-blue-100 rounded text-blue-800 font-mono text-xs">ESPACE</kbd> pour interrompre et parler</span>
+        </div>
+      </div>
+
+      <!-- Indicateur TTS (quand l'assistant parle) -->
+      <div id="hf-tts-indicator" class="hidden px-4 py-2 bg-blue-50 border-b border-blue-200">
+        <div class="flex items-center gap-2">
+          <div class="flex gap-1">
+            <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+            <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
+            <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse" style="animation-delay: 0.4s"></div>
+          </div>
+          <span class="text-xs text-blue-700 font-medium">L'assistant parle...</span>
         </div>
       </div>
 
@@ -118,6 +154,27 @@ export function createHandsFreePanel() {
         </label>
       </div>
 
+      <!-- Zone de transcription (visible en live) -->
+      <div class="flex-shrink-0 px-4 py-3 border-t border-gray-200 bg-white">
+        <label class="block text-xs font-medium text-gray-700 mb-2">Transcription en direct</label>
+        <div class="relative">
+          <textarea 
+            id="hf-transcript" 
+            readonly 
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-gray-50 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"
+            rows="3"
+            placeholder="Votre transcription apparaîtra ici en temps réel..."
+          ></textarea>
+          <div id="hf-interim" class="absolute bottom-2 right-2 text-xs text-gray-400 italic"></div>
+        </div>
+        <div class="flex items-center justify-between mt-2">
+          <div id="hf-countdown" class="text-xs text-purple-600 font-medium hidden"></div>
+          <button id="hf-cancel-btn" class="hidden px-3 py-1 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+            Annuler
+          </button>
+        </div>
+      </div>
+
       <!-- Status Indicator -->
       <div id="hf-status-indicator" class="flex-shrink-0 px-4 py-2 bg-gray-50 border-t border-gray-100">
         <div class="flex items-center justify-center gap-2">
@@ -128,7 +185,7 @@ export function createHandsFreePanel() {
     </div>
 
     <!-- Colonne droite : Historique des messages -->
-    <div class="flex-1 flex flex-col min-w-0">
+    <div class="flex-1 flex flex-col min-w-0 min-h-0">
       <!-- Header avec indicateurs -->
       <div class="flex-shrink-0 px-4 py-3 border-b border-gray-100 bg-white">
         <div class="flex items-center justify-between">
@@ -166,7 +223,7 @@ export function createHandsFreePanel() {
       </div>
 
       <!-- Chat History -->
-      <div id="hf-messages" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+      <div id="hf-messages" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 min-h-0">
         <div class="text-center py-8 text-gray-400">
           <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
@@ -178,12 +235,37 @@ export function createHandsFreePanel() {
     </div>
   `;
 
-  setTimeout(() => {
+  setTimeout(async () => {
     setupHandsFreeEvents(panel);
-    initTTS();
+    await initTTS();
     renderMessages();
     // Charger automatiquement le meilleur modèle optimisé pour l'oral
     autoLoadBestOralModel();
+    // Exposer showChunkViewer globalement pour les onclick
+    window.showChunkViewer = showChunkViewer;
+    
+    // Lancer le diagnostic au démarrage
+    const diagnostics = await runStartupDiagnostics();
+    
+    // Tester la reconnaissance si STT est supporté
+    if (diagnostics.sttSupported && diagnostics.micPermission !== 'denied') {
+      // Tester la reconnaissance après un court délai pour laisser le temps au TTS de finir
+      setTimeout(async () => {
+        const recognitionTest = await testRecognition();
+        if (recognitionTest) {
+          console.log('[HandsFree] Recognition test passed');
+        } else {
+          console.warn('[HandsFree] Recognition test failed or timeout');
+        }
+      }, 2000);
+    }
+    
+    // Écouter les messages ajoutés au chat pour synchroniser l'historique
+    window.addEventListener('chat:messageAdded', (e) => {
+      if (e.detail?.slot === 'primary') {
+        renderMessages(); // Re-render quand un message est ajouté au chat
+      }
+    });
   }, 0);
 
   // Écouter les mises à jour du chat
@@ -203,7 +285,7 @@ export function createHandsFreePanel() {
 }
 
 /**
- * Charge automatiquement le meilleur modèle optimisé pour l'oral
+ * Charge automatiquement Llama 3.2 3B pour Hands-Free
  */
 async function autoLoadBestOralModel() {
   // Si un modèle est déjà chargé dans primary, on l'utilise
@@ -212,26 +294,118 @@ async function autoLoadBestOralModel() {
     return;
   }
 
-  // Récupérer le meilleur modèle optimisé pour l'oral
-  const oralModels = getOralOptimizedModels();
-  if (oralModels.length === 0) {
-    console.warn('[HandsFree] No oral-optimized models available');
-    return;
-  }
-
-  // Prendre le premier (déjà trié par score oral)
-  const bestModel = oralModels[0];
-  console.log('[HandsFree] Auto-loading best oral model:', bestModel.name);
+  // Forcer Llama 3.2 3B pour Hands-Free
+  const llama3BModel = {
+    id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+    name: 'Llama 3.2 3B'
+  };
+  
+  console.log('[HandsFree] Auto-loading Llama 3.2 3B for Hands-Free');
 
   try {
-    await initWebLLM(bestModel.id, (pct, text) => {
+    await initWebLLM(llama3BModel.id, (pct, text) => {
       console.log(`[HandsFree] Loading: ${pct}% - ${text}`);
     }, 'primary');
     
-    console.log('[HandsFree] Best oral model loaded:', bestModel.name);
+    console.log('[HandsFree] Llama 3.2 3B loaded successfully');
   } catch (error) {
-    console.error('[HandsFree] Failed to auto-load model:', error);
+    console.error('[HandsFree] Failed to auto-load Llama 3.2 3B:', error);
+    // Fallback : essayer un autre modèle oral optimisé
+    const oralModels = getOralOptimizedModels();
+    if (oralModels.length > 0) {
+      const fallbackModel = oralModels[0];
+      console.log('[HandsFree] Fallback to:', fallbackModel.name);
+      try {
+        await initWebLLM(fallbackModel.id, (pct, text) => {
+          console.log(`[HandsFree] Loading: ${pct}% - ${text}`);
+        }, 'primary');
+      } catch (fallbackError) {
+        console.error('[HandsFree] Fallback also failed:', fallbackError);
+      }
+    }
   }
+}
+
+/**
+ * Diagnostic automatique au démarrage
+ */
+async function runStartupDiagnostics() {
+  const diagnostics = {
+    ttsSupported: isTTSSupported(),
+    sttSupported: isSTTSupported(),
+    ttsWorking: false,
+    micPermission: 'unknown',
+    micWorking: false
+  };
+  
+  console.log('[HandsFree] Running startup diagnostics...');
+  
+  // Test TTS
+  if (diagnostics.ttsSupported && ttsManager) {
+    try {
+      await ttsManager.speak('Test de la voix');
+      diagnostics.ttsWorking = true;
+      console.log('[Diagnostic] TTS test successful');
+    } catch (e) {
+      console.error('[Diagnostic] TTS test failed:', e);
+    }
+  } else if (diagnostics.ttsSupported && !ttsManager) {
+    // TTS supporté mais pas encore initialisé
+    console.warn('[Diagnostic] TTS supported but not initialized yet');
+  }
+  
+  // Vérifier permissions microphone
+  if (navigator.permissions) {
+    try {
+      const result = await navigator.permissions.query({name: 'microphone'});
+      diagnostics.micPermission = result.state;
+      console.log('[Diagnostic] Microphone permission:', result.state);
+    } catch (e) {
+      console.warn('[Diagnostic] Cannot check mic permission:', e);
+      // Essayer getUserMedia comme fallback
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+        diagnostics.micPermission = 'granted';
+        diagnostics.micWorking = true;
+        console.log('[Diagnostic] Microphone access confirmed via getUserMedia');
+      } catch (mediaError) {
+        if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+          diagnostics.micPermission = 'denied';
+        } else if (mediaError.name === 'NotFoundError') {
+          diagnostics.micPermission = 'not-found';
+        }
+        console.warn('[Diagnostic] Microphone access failed:', mediaError.name);
+      }
+    }
+  } else {
+    // Fallback: essayer getUserMedia directement
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      diagnostics.micPermission = 'granted';
+      diagnostics.micWorking = true;
+      console.log('[Diagnostic] Microphone access confirmed via getUserMedia (no permissions API)');
+    } catch (e) {
+      console.warn('[Diagnostic] Cannot test microphone:', e.name);
+    }
+  }
+  
+  // Afficher le rapport dans la console
+  console.log('[HandsFree] Diagnostics result:', diagnostics);
+  
+  // Afficher un avertissement si problèmes critiques
+  if (!diagnostics.ttsSupported) {
+    console.warn('[HandsFree] TTS not supported - Hands-Free will be limited');
+  }
+  if (!diagnostics.sttSupported) {
+    console.warn('[HandsFree] STT not supported - Hands-Free will not work');
+  }
+  if (diagnostics.micPermission === 'denied') {
+    console.warn('[HandsFree] Microphone permission denied - STT will not work');
+  }
+  
+  return diagnostics;
 }
 
 /**
@@ -245,12 +419,26 @@ async function initTTS() {
 
   console.log('[HandsFree] Initializing TTS...');
 
+  // TTS Manager simple
   ttsManager = createTTSManager({
     ...voiceConfig,
     onStart: () => {
-      console.log('[HandsFree] TTS onStart callback');
+      console.log('[HandsFree] TTS started');
       setState(STATES.SPEAKING);
-      // S'assurer que la reconnaissance est arrêtée pendant le TTS
+      
+      // Afficher l'indicateur ESPACE
+      const spaceHint = document.getElementById('hf-space-hint');
+      if (spaceHint) {
+        spaceHint.classList.remove('hidden');
+      }
+      
+      // Afficher l'indicateur TTS
+      const ttsIndicator = document.getElementById('hf-tts-indicator');
+      if (ttsIndicator) {
+        ttsIndicator.classList.remove('hidden');
+      }
+      
+      // Arrêter reconnaissance pendant TTS
       if (recognition) {
         try {
           recognition.stop();
@@ -260,25 +448,52 @@ async function initTTS() {
       }
     },
     onEnd: () => {
-      console.log('[HandsFree] TTS onEnd callback, handsFreeEnabled:', handsFreeEnabled);
-      // NE PAS redémarrer l'écoute ici car speakStreaming() gère ça après toutes les phrases
-      // Seulement si on n'est pas en mode streaming (appel direct à speak)
-      if (handsFreeEnabled && currentState === STATES.SPEAKING && !ttsManager.isSpeaking()) {
-        // Petit délai avant de reprendre l'écoute
+      console.log('[HandsFree] TTS ended');
+      
+      // Cacher l'indicateur ESPACE
+      const spaceHint = document.getElementById('hf-space-hint');
+      if (spaceHint) {
+        spaceHint.classList.add('hidden');
+      }
+      
+      // Cacher l'indicateur TTS
+      const ttsIndicator = document.getElementById('hf-tts-indicator');
+      if (ttsIndicator) {
+        ttsIndicator.classList.add('hidden');
+      }
+      
+      // Réactiver l'écoute automatiquement après TTS
+      if (handsFreeEnabled) {
         setTimeout(() => {
           if (handsFreeEnabled && !ttsManager.isSpeaking()) {
             startListening();
           }
         }, 300);
-      } else if (!handsFreeEnabled) {
+      } else {
         setState(STATES.IDLE);
       }
     },
     onError: (err) => {
       console.error('[HandsFree] TTS error:', err);
-      showError(`Erreur TTS: ${err}`);
+      
+      // Cacher l'indicateur ESPACE
+      const spaceHint = document.getElementById('hf-space-hint');
+      if (spaceHint) {
+        spaceHint.classList.add('hidden');
+      }
+      
+      // Cacher l'indicateur TTS
+      const ttsIndicator = document.getElementById('hf-tts-indicator');
+      if (ttsIndicator) {
+        ttsIndicator.classList.add('hidden');
+      }
+      
+      if (err !== 'interrupted') {
+        showError(`Erreur TTS: ${err}`, true);
+      }
+      
+      // Réactiver l'écoute en cas d'erreur
       if (handsFreeEnabled) {
-        // Redémarrer l'écoute en cas d'erreur
         setTimeout(() => {
           if (handsFreeEnabled) {
             startListening();
@@ -291,15 +506,39 @@ async function initTTS() {
   // Charger les voix disponibles
   await loadVoiceOptions();
   console.log('[HandsFree] TTS initialized');
+  
+  // Test automatique après chargement des voix
+  if (ttsManager) {
+    try {
+      await ttsManager.speak('Système vocal initialisé');
+      console.log('[HandsFree] TTS test successful');
+    } catch (e) {
+      console.error('[HandsFree] TTS test failed:', e);
+      showError('TTS non fonctionnel. Vérifiez les paramètres audio.', false);
+    }
+  }
 }
 
 /**
- * Parle en streaming (phrase par phrase) avec bulle animée
+ * Parle en streaming (phrase par phrase) avec bulle animée (SIMPLIFIÉ)
  */
 async function speakStreaming(text, onSentenceSpoken) {
-  if (!ttsManager || !text) return;
+  if (!text) {
+    console.warn('[HandsFree] speakStreaming: no text provided');
+    return;
+  }
   
-  // ARRÊTER la reconnaissance vocale avant de parler pour éviter qu'elle capture la voix du TTS
+  if (!ttsManager) {
+    console.error('[HandsFree] speakStreaming: ttsManager not initialized');
+    // Essayer de réinitialiser
+    await initTTS();
+    if (!ttsManager) {
+      console.error('[HandsFree] speakStreaming: failed to initialize TTS');
+      return;
+    }
+  }
+  
+  // Arrêter reconnaissance avant TTS
   if (recognition) {
     try {
       recognition.stop();
@@ -308,33 +547,28 @@ async function speakStreaming(text, onSentenceSpoken) {
     }
   }
   
-  // Découper en phrases intelligemment
+  // Découper en phrases
   const sentences = text.match(/[^.!?]+[.!?]+/g) || 
                     text.match(/[^.!?\n]+[.!?\n]+/g) || 
                     [text];
   
   let spokenText = '';
   let currentSentenceIndex = 0;
-  
-  // Créer/afficher la bulle de streaming
   const bubble = createStreamingBubble();
   
   for (const sentence of sentences) {
-    if (!handsFreeEnabled) break; // Arrêter si mode désactivé
+    if (!handsFreeEnabled) break;
     
     const trimmedSentence = sentence.trim();
     if (!trimmedSentence) continue;
     
-    // Mettre à jour la bulle avec la phrase en cours
     updateStreamingBubble(bubble, trimmedSentence, currentSentenceIndex, sentences.length);
     
-    // Parler la phrase
     try {
       await ttsManager.speak(trimmedSentence);
       spokenText += trimmedSentence + ' ';
       currentSentenceIndex++;
       
-      // Callback de progression
       if (onSentenceSpoken) {
         onSentenceSpoken(spokenText.trim());
       }
@@ -346,17 +580,9 @@ async function speakStreaming(text, onSentenceSpoken) {
     }
   }
   
-  // Cacher la bulle à la fin
   hideStreamingBubble(bubble);
   
-  // Redémarrer l'écoute APRÈS la fin complète du TTS
-  if (handsFreeEnabled) {
-    setTimeout(() => {
-      if (handsFreeEnabled && !ttsManager.isSpeaking()) {
-        startListening();
-      }
-    }, 300);
-  }
+  // Réactivation automatique gérée par ttsManager.onEnd
 }
 
 /**
@@ -814,6 +1040,55 @@ function showHandsFreeConfirmation() {
 }
 
 /**
+ * Configure le raccourci ESPACE pour couper le TTS
+ */
+function setupSpaceKeyListener() {
+  // Supprimer l'ancien listener si existe
+  if (spaceKeyListener) {
+    document.removeEventListener('keydown', spaceKeyListener);
+  }
+  
+  spaceKeyListener = (e) => {
+    // ESPACE pour couper le TTS et réactiver le micro
+    if (e.code === 'Space' && !e.repeat && handsFreeEnabled) {
+      // Éviter si on est dans un input/textarea
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        return;
+      }
+      
+      // Si TTS est en cours, couper et réactiver
+      if (ttsManager?.isSpeaking()) {
+        e.preventDefault();
+        console.log('[HandsFree] Space pressed - stopping TTS and reactivating mic');
+        
+        ttsManager.stop();
+        
+        // Réactiver le micro immédiatement
+        setTimeout(() => {
+          if (handsFreeEnabled) {
+            startListening();
+          }
+        }, 100);
+      }
+    }
+  };
+  
+  document.addEventListener('keydown', spaceKeyListener);
+  console.log('[HandsFree] Space key listener configured (press SPACE to interrupt TTS)');
+}
+
+/**
+ * Supprime le listener ESPACE
+ */
+function removeSpaceKeyListener() {
+  if (spaceKeyListener) {
+    document.removeEventListener('keydown', spaceKeyListener);
+    spaceKeyListener = null;
+  }
+}
+
+/**
  * Toggle le mode Hands-Free
  */
 export async function toggleHandsFree() {
@@ -852,6 +1127,9 @@ export async function toggleHandsFree() {
     }
     updateConversationModeUI();
     
+    // Configurer le raccourci ESPACE
+    setupSpaceKeyListener();
+    
     // Bip sonore au démarrage
     playStartBeep();
     
@@ -859,6 +1137,7 @@ export async function toggleHandsFree() {
     startListening();
   } else {
     stopAll();
+    removeSpaceKeyListener();
   }
 
   updateToggleButton();
@@ -866,160 +1145,101 @@ export async function toggleHandsFree() {
 
 
 /**
- * Démarre l'écoute
+ * Démarre l'écoute (CORRIGÉ - évite "Recognition already started")
  */
 function startListening() {
   if (!isSTTSupported()) return;
+  
+  // CORRECTION: Vérifier si déjà en cours avant de démarrer
+  if (recognition) {
+    try {
+      // Essayer d'arrêter proprement d'abord
+      recognition.stop();
+      // Attendre un peu avant de redémarrer
+      setTimeout(() => {
+        if (handsFreeEnabled) {
+          startListeningInternal();
+        }
+      }, 200);
+      return;
+    } catch (e) {
+      // Si erreur, continuer quand même
+      console.warn('[HandsFree] Error stopping recognition before restart:', e);
+    }
+  }
+  
+  startListeningInternal();
+}
+
+async function startListeningInternal() {
+  if (!isSTTSupported()) {
+    showError('Reconnaissance vocale non supportée par votre navigateur', false);
+    return;
+  }
+  
+  // Vérifier permissions microphone
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(track => track.stop()); // Libérer immédiatement
+    console.log('[HandsFree] Microphone permission granted');
+  } catch (e) {
+    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+      showError('Permission microphone refusée. Activez-la dans les paramètres du navigateur.', true);
+      return;
+    } else if (e.name === 'NotFoundError') {
+      showError('Aucun microphone détecté. Vérifiez votre matériel.', false);
+      return;
+    } else {
+      showError(`Erreur microphone: ${e.message}`, true);
+      return;
+    }
+  }
 
   hideError();
-  speechDetector = createSpeechDetector(1000); // 1 seconde pour l'interruption
+  speechDetector = createSpeechDetector(1000);
 
-  recognition = createSpeechRecognition({
+  // Créer une nouvelle instance si nécessaire
+  if (!recognition) {
+    recognition = createSpeechRecognition({
     lang: voiceConfig.lang,
     continuous: true,
     interimResults: true,
     onStart: () => {
+      console.log('[HandsFree] Recognition started');
       setState(STATES.LISTENING);
     },
     onResult: ({ interim, final, isFinal }) => {
       const interimEl = document.getElementById('hf-interim');
       const transcriptEl = document.getElementById('hf-transcript');
 
+      // AFFICHAGE EN LIVE : Afficher la transcription complète (final + interim) en temps réel
+      if (isFinal && final) {
+        // Ajouter le texte final à la transcription accumulée
+        currentTranscript += (currentTranscript ? ' ' : '') + final.trim();
+      }
+      
+      // Afficher en live : transcription accumulée + interim actuel
+      const displayText = currentTranscript + (interim ? (currentTranscript ? ' ' : '') + interim : '');
+      
+      if (transcriptEl) {
+        transcriptEl.value = displayText;
+        // Auto-resize si textarea
+        if (transcriptEl.tagName === 'TEXTAREA') {
+          transcriptEl.style.height = 'auto';
+          transcriptEl.style.height = transcriptEl.scrollHeight + 'px';
+        }
+      }
+      
       if (interimEl) {
+        // Afficher l'interim séparément (optionnel, pour feedback visuel)
         interimEl.textContent = interim;
       }
-
-      // INTERRUPTION IMMÉDIATE : Si TTS parle et utilisateur parle, couper TTS immédiatement
-      if (currentState === STATES.SPEAKING && ttsManager?.isSpeaking() && (interim.trim().length > 3 || final.trim().length > 3)) {
-        console.log('[HandsFree] User interrupting TTS - immediate stop');
-        // Couper TTS immédiatement (speechSynthesis.cancel)
-        if (ttsManager) {
-          ttsManager.stop();
-        }
-        // Réinitialiser la transcription
-        currentTranscript = '';
-        if (transcriptEl) transcriptEl.value = '';
-        if (interimEl) interimEl.textContent = '';
-        // Retirer le message assistant de l'historique si en cours
-        const messagesContainer = document.getElementById('hf-messages');
-        if (messagesContainer) {
-          const lastMsg = messagesContainer.lastElementChild;
-          if (lastMsg && lastMsg.querySelector('.bg-gray-100')) {
-            lastMsg.remove();
-          }
-        }
-        setState(STATES.LISTENING);
-        hideInterruptionCountdown();
-        return;
-      }
       
-      // Si on est en train de traiter, et que l'utilisateur reparle
-      if (currentState === STATES.PROCESSING && interim.trim().length > 5) {
-        console.log('[HandsFree] User interrupting during processing');
-        // Réinitialiser la transcription
-        currentTranscript = '';
-        if (transcriptEl) transcriptEl.value = '';
-        if (interimEl) interimEl.textContent = '';
-        // Retirer le message utilisateur de l'historique
-        const messagesContainer = document.getElementById('hf-messages');
-        if (messagesContainer && messagesContainer.lastElementChild) {
-          messagesContainer.lastElementChild.remove();
-        }
-        setState(STATES.LISTENING);
-        return;
-      }
-
-      if (isFinal && final) {
-        // Ne plus interrompre immédiatement, utiliser le speechDetector avec délai
-        // Si on est en train de traiter ou parler, démarrer le compte à rebours
-        if (currentState === STATES.PROCESSING || currentState === STATES.SPEAKING) {
-          // Vérifier que c'est de la vraie parole
-          const hasRealSpeech = final.trim().length > 5 && final.split(/\s+/).length >= 2;
-          if (hasRealSpeech) {
-            // Démarrer le compte à rebours d'interruption (1 seconde)
-            if (!speechDetector?.isSpeaking) {
-              speechDetector?.onSpeechStart();
-            }
-            showInterruptionCountdown();
-          }
-        }
-        
-        currentTranscript += (currentTranscript ? ' ' : '') + final.trim();
-        if (transcriptEl) {
-          transcriptEl.value = currentTranscript;
-        }
-        if (interimEl) {
-          interimEl.textContent = '';
-        }
-        updateSendButton();
-        
-        // Mode conversation : reset le timer de silence seulement si on écoute
-        if (conversationMode && currentState === STATES.LISTENING) {
-          resetSilenceTimer();
-        }
-      }
+      updateSendButton();
       
-      // Vérifier interruption après 1 seconde (pour PROCESSING et SPEAKING)
-      if ((currentState === STATES.PROCESSING || currentState === STATES.SPEAKING) && speechDetector?.shouldInterrupt()) {
-        const text = interim || final || '';
-        const hasRealSpeech = text.trim().length > 5 && text.split(/\s+/).length >= 2;
-        
-        if (hasRealSpeech) {
-          console.log('[HandsFree] Interrupting after 1s of speech');
-          if (ttsManager?.isSpeaking()) {
-            ttsManager.stop();
-          }
-          currentTranscript = '';
-          if (transcriptEl) transcriptEl.value = '';
-          if (interimEl) interimEl.textContent = '';
-          // Retirer le message utilisateur de l'historique
-          const messagesContainer = document.getElementById('hf-messages');
-          if (messagesContainer && messagesContainer.lastElementChild) {
-            messagesContainer.lastElementChild.remove();
-          }
-          setState(STATES.LISTENING);
-          hideInterruptionCountdown();
-        } else {
-          speechDetector.reset();
-          hideInterruptionCountdown();
-        }
-      }
-
-      // Vérifier interruption TTS avec délai et validation
-      if (ttsManager?.isSpeaking() && speechDetector?.shouldInterrupt()) {
-        // VALIDATION : Vérifier que c'est vraiment de la parole (pas juste du bruit)
-        const hasRealSpeech = (interim && interim.trim().length > 5) || 
-                              (final && final.trim().length > 5);
-        
-        // Vérifier aussi que ce n'est pas juste du bruit (mots cohérents)
-        const text = interim || final || '';
-        const hasWords = text.split(/\s+/).length >= 2;
-        
-        if (hasRealSpeech && hasWords) {
-          console.log('[HandsFree] Real speech detected, interrupting TTS after 1s');
-          ttsManager.stop();
-          setState(STATES.LISTENING);
-          hideInterruptionCountdown();
-        } else {
-          // C'est probablement du bruit, ne pas interrompre
-          console.log('[HandsFree] Noise detected, ignoring');
-          speechDetector.reset();
-          hideInterruptionCountdown();
-        }
-      }
-      
-      // Afficher/mettre à jour le compte à rebours d'interruption si parole détectée
-      if ((ttsManager?.isSpeaking() || currentState === STATES.PROCESSING) && speechDetector?.isSpeaking && !speechDetector?.shouldInterrupt()) {
-        const text = interim || final || '';
-        const hasRealSpeech = text.trim().length > 5 && text.split(/\s+/).length >= 2;
-        if (hasRealSpeech) {
-          const container = document.getElementById('hf-interrupt-countdown');
-          if (container && !container.classList.contains('hidden')) {
-            updateInterruptionCountdown();
-          } else if (container && container.classList.contains('hidden')) {
-            showInterruptionCountdown();
-          }
-        }
+      // Mode conversation : reset le timer de silence seulement si on écoute
+      if (conversationMode && currentState === STATES.LISTENING && (isFinal || interim)) {
+        resetSilenceTimer();
       }
     },
     onSpeechStart: () => {
@@ -1043,40 +1263,64 @@ function startListening() {
         cancelBtn.classList.add('hidden');
       }
       
-      // Si TTS est en cours OU si on est en train de traiter, démarrer le compte à rebours (1s)
-      if (ttsManager?.isSpeaking() || currentState === STATES.PROCESSING) {
-        showInterruptionCountdown();
-      }
-      
-      // Ne plus interrompre immédiatement, attendre 1 seconde via le speechDetector
+      // SIMPLIFIÉ: Pas de compte à rebours d'interruption automatique
     },
     onSpeechEnd: () => {
       speechDetector?.onSpeechEnd();
       // Cacher le compte à rebours d'interruption
       hideInterruptionCountdown();
-      // Mode conversation : démarrer le timer de silence
+      // Mode conversation : démarrer le timer de silence après un petit délai
+      // pour s'assurer que l'utilisateur a vraiment fini de parler
       if (conversationMode && currentTranscript.trim()) {
-        resetSilenceTimer();
+        // Attendre 200ms après onSpeechEnd pour éviter les faux positifs
+        setTimeout(() => {
+          // Vérifier qu'on est toujours en mode écoute et qu'il n'y a pas de nouvelle parole
+          if (conversationMode && currentState === STATES.LISTENING && currentTranscript.trim()) {
+            resetSilenceTimer();
+          }
+        }, 200);
       }
     },
     onError: ({ message }) => {
-      if (message !== 'Reconnaissance annulée') {
+      // Ignorer "Recognition already started" (géré ailleurs)
+      if (message !== 'Reconnaissance annulée' && !message.includes('already started')) {
         showError(message);
       }
     },
     onEnd: () => {
-      // Redémarrer si toujours actif
+      // Redémarrer si toujours actif (avec protection)
       if (handsFreeEnabled && currentState === STATES.LISTENING) {
         setTimeout(() => {
-          if (handsFreeEnabled) {
-            recognition?.start();
+          if (handsFreeEnabled && currentState === STATES.LISTENING && !ttsManager?.isSpeaking()) {
+            try {
+              recognition?.start();
+            } catch (e) {
+              // Si erreur "already started", ignorer
+              if (!e.message?.includes('already started')) {
+                console.warn('[HandsFree] Error restarting recognition:', e);
+              }
+            }
           }
-        }, 100);
+        }, 200);
       }
     }
   });
+  } else {
+    // Mettre à jour la langue si nécessaire
+    recognition.setLang(voiceConfig.lang);
+  }
 
-  recognition.start();
+  try {
+    recognition.start();
+  } catch (e) {
+    // Gérer "already started" gracieusement
+    if (e.message?.includes('already started')) {
+      console.log('[HandsFree] Recognition already running, skipping start');
+    } else {
+      console.error('[HandsFree] Error starting recognition:', e);
+      showError('Erreur de démarrage de la reconnaissance vocale', true);
+    }
+  }
 }
 
 /**
@@ -1111,14 +1355,22 @@ function resetSilenceTimer() {
     cancelBtn.classList.remove('hidden');
   }
   
-  let countdown = 2;
+  // Compte à rebours précis : 3 secondes avec mise à jour toutes les 100ms pour affichage fluide
+  let remainingMs = SILENCE_DELAY; // 3000ms
+  const startTime = Date.now();
+  
   const updateCountdown = () => {
-    if (countdownEl) {
-      countdownEl.textContent = `Envoi dans ${countdown}s...`;
-    }
-    countdown--;
+    const elapsed = Date.now() - startTime;
+    remainingMs = Math.max(0, SILENCE_DELAY - elapsed);
     
-    if (countdown < 0) {
+    if (countdownEl) {
+      // Afficher avec 1 décimale pour plus de précision
+      const seconds = (remainingMs / 1000).toFixed(1);
+      countdownEl.textContent = `Envoi dans ${seconds}s...`;
+    }
+    
+    if (remainingMs <= 0) {
+      // Temps écoulé, envoyer
       if (countdownEl) {
         countdownEl.textContent = '';
         countdownEl.classList.add('hidden');
@@ -1130,11 +1382,90 @@ function resetSilenceTimer() {
         sendTranscript();
       }
     } else {
-      silenceTimeout = setTimeout(updateCountdown, 1000);
+      // Mettre à jour toutes les 100ms pour un compte à rebours fluide
+      silenceTimeout = setTimeout(updateCountdown, 100);
     }
   };
   
+  // Démarrer immédiatement
   updateCountdown();
+}
+
+/**
+ * Test de reconnaissance vocale au démarrage
+ */
+async function testRecognition() {
+  return new Promise((resolve) => {
+    if (!isSTTSupported()) {
+      console.warn('[HandsFree] Recognition test skipped: STT not supported');
+      resolve(false);
+      return;
+    }
+    
+    console.log('[HandsFree] Testing recognition...');
+    let resolved = false;
+    
+    const testRecognition = createSpeechRecognition({
+      lang: voiceConfig.lang,
+      continuous: false,
+      interimResults: false,
+      onResult: ({ final }) => {
+        if (final && !resolved) {
+          console.log('[HandsFree] Recognition test successful:', final);
+          resolved = true;
+          resolve(true);
+        }
+      },
+      onError: ({ message }) => {
+        if (!resolved) {
+          console.error('[HandsFree] Recognition test failed:', message);
+          resolved = true;
+          resolve(false);
+        }
+      },
+      onEnd: () => {
+        if (!resolved) {
+          console.log('[HandsFree] Recognition test ended without result');
+          resolved = true;
+          resolve(false);
+        }
+      }
+    });
+    
+    if (!testRecognition) {
+      resolve(false);
+      return;
+    }
+    
+    // Timeout de 3 secondes
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        testRecognition?.stop();
+        console.log('[HandsFree] Recognition test timeout');
+        resolved = true;
+        resolve(false);
+      }
+    }, 3000);
+    
+    try {
+      testRecognition.start();
+      // Nettoyer le timeout si on résout avant
+      testRecognition.recognition.onend = () => {
+        clearTimeout(timeout);
+        if (!resolved) {
+          resolved = true;
+          resolve(false);
+        }
+      };
+    } catch (e) {
+      clearTimeout(timeout);
+      if (!resolved) {
+        console.error('[HandsFree] Recognition test start error:', e);
+        resolved = true;
+        resolve(false);
+      }
+    }
+  });
 }
 
 /**
@@ -1235,25 +1566,8 @@ async function sendTranscript() {
     generatingEl.classList.remove('hidden');
   }
 
-  // Afficher le message envoyé dans l'historique AVANT la réponse
-  const messagesContainer = document.getElementById('hf-messages');
-  if (messagesContainer) {
-    // Supprimer le placeholder si présent
-    const placeholder = messagesContainer.querySelector('.text-center');
-    if (placeholder) {
-      placeholder.remove();
-    }
-    
-    const userMsg = document.createElement('div');
-    userMsg.className = 'flex justify-end mb-2';
-    userMsg.innerHTML = `
-      <div class="max-w-[85%] bg-purple-600 text-white rounded-2xl px-4 py-2.5 rounded-br-md">
-        <div class="text-sm">${message}</div>
-      </div>
-    `;
-    messagesContainer.appendChild(userMsg);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
+  // Ne pas ajouter le message ici : sendMessage() le fait déjà (ligne 176 de chat.js)
+  // Cela évite les doublons
 
   // Reset
   currentTranscript = '';
@@ -1295,12 +1609,9 @@ async function sendTranscript() {
     // Mesures de performance
     const startTime = Date.now();
     let firstTokenTime = null;
-    let firstSpeechTime = null;
     let tokenCount = 0;
     let lastTokenTime = Date.now();
     let streamingActive = false;
-    let ttsStarted = false;
-    let accumulatedTextForTTS = ''; // Texte accumulé pour TTS chunking
     
     // Timeout pour détecter si le streaming bloque
     const streamingTimeout = setInterval(() => {
@@ -1319,8 +1630,8 @@ async function sendTranscript() {
     // Utiliser le slot 'handsfree' avec le modèle dédié Hands-Free
     const result = await sendMessage(message, {
       systemPrompt: ORAL_SYSTEM_PROMPT,
-      temperature: 0.8,
-      maxTokens: 150
+      temperature: 0.7,
+      maxTokens: 80
     }, (token, full) => {
       // Streaming callback - afficher en temps réel
       streamingActive = true;
@@ -1337,44 +1648,8 @@ async function sendTranscript() {
       tokenCount++;
       console.log('[HandsFree] Streaming token #' + tokenCount + ', full length:', full.length);
       
-      // TTS CHUNKING: Démarrer TTS avant la fin de génération
-      // Démarrer dès qu'on a une phrase complète (terminée par . ! ?) et au moins 50 caractères
-      if (!ttsStarted && ttsManager && full.length >= 50) {
-        const sentences = full.match(/[^.!?]+[.!?]+/g);
-        if (sentences && sentences.length > 0) {
-          const firstSentence = sentences[0].trim();
-          // Si la première phrase fait au moins 20 caractères, démarrer TTS
-          if (firstSentence.length >= 20) {
-            accumulatedTextForTTS = firstSentence;
-            ttsStarted = true;
-            firstSpeechTime = Date.now();
-            const ttfst = firstSpeechTime - startTime;
-            console.log(`[HandsFree] Time-to-first-speech: ${ttfst}ms`);
-            
-            // Démarrer TTS en arrière-plan (ne pas attendre)
-            (async () => {
-              try {
-                // Nettoyer le markdown pour TTS
-                const cleanText = accumulatedTextForTTS
-                  .replace(/#{1,6}\s/g, '')
-                  .replace(/\*\*/g, '')
-                  .replace(/\*([^*]+)\*/g, '$1')
-                  .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-                  .trim();
-                
-                if (cleanText) {
-                  setState(STATES.SPEAKING);
-                  await ttsManager.speak(cleanText);
-                }
-              } catch (ttsErr) {
-                if (ttsErr !== 'interrupted') {
-                  console.error('[HandsFree] TTS chunking error:', ttsErr);
-                }
-              }
-            })();
-          }
-        }
-      }
+      // SUPPRIMÉ: TTS chunking pendant le streaming
+      // On attend la fin complète de la génération avant de commencer le TTS
       
       // Mettre à jour l'animation des 3 points style ChatGPT
       const generatingEl = document.getElementById('hf-generating');
@@ -1406,31 +1681,46 @@ async function sendTranscript() {
         tokenCountEl.textContent = `${wordCount} tokens`;
       }
       
-      // Mettre à jour le message en streaming dans l'UI
-      if (!streamingMessageEl) {
-        // Attendre que le message soit créé
-        setTimeout(() => {
-          const messagesContainer = document.getElementById('hf-messages');
-          if (messagesContainer) {
-            streamingMessageEl = messagesContainer.querySelector('[data-message-id]')?.querySelector('.message-content');
-            if (!streamingMessageEl) {
-              // Re-render pour créer le message
-              renderMessages();
-              streamingMessageEl = messagesContainer.querySelector('[data-message-id]')?.querySelector('.message-content');
-            }
+      // Mettre à jour le message assistant en streaming dans l'UI
+      // Le message assistant sera créé par sendMessage() dans l'historique
+      // On met à jour via renderMessages() pour éviter les conflits
+      const messagesContainer = document.getElementById('hf-messages');
+      if (messagesContainer) {
+        // Trouver le dernier message assistant (en cours de streaming)
+        const assistantMessages = messagesContainer.querySelectorAll('[data-message-id]');
+        let lastAssistantMsg = null;
+        for (let i = assistantMessages.length - 1; i >= 0; i--) {
+          const msg = assistantMessages[i];
+          if (msg.querySelector('.bg-gray-100')) {
+            lastAssistantMsg = msg.querySelector('.message-content');
+            break;
           }
-        }, 100);
-      }
-      
-      if (streamingMessageEl) {
-        // Afficher le texte en streaming avec markdown
-        streamingMessageEl.innerHTML = parseMarkdown(full) + '<span class="streaming-text"></span>';
+        }
+        
+        if (lastAssistantMsg) {
+          // Mettre à jour le contenu en streaming
+          lastAssistantMsg.innerHTML = parseMarkdown(full) + '<span class="streaming-text animate-pulse">▊</span>';
+        } else {
+          // Si pas encore créé, render pour créer le message
+          renderMessages();
+          // Retrouver après render
+          setTimeout(() => {
+            const assistantMsgs = messagesContainer.querySelectorAll('[data-message-id]');
+            for (let i = assistantMsgs.length - 1; i >= 0; i--) {
+              const msg = assistantMsgs[i];
+              if (msg.querySelector('.bg-gray-100')) {
+                const content = msg.querySelector('.message-content');
+                if (content) {
+                  content.innerHTML = parseMarkdown(full) + '<span class="streaming-text animate-pulse">▊</span>';
+                }
+                break;
+              }
+            }
+          }, 50);
+        }
         
         // Scroll automatique
-        const messagesContainer = document.getElementById('hf-messages');
-        if (messagesContainer) {
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
       }
     }, 'primary'); // Utiliser le slot primary pour partager l'historique avec le chat
     
@@ -1508,7 +1798,7 @@ async function sendTranscript() {
     }
 
     // Lire la réponse complète
-    if (ttsManager && responseText) {
+    if (responseText) {
       // Nettoyer le markdown pour la lecture
       const cleanText = responseText
         .replace(/#{1,6}\s/g, '')
@@ -1525,32 +1815,35 @@ async function sendTranscript() {
       console.log('[HandsFree] Clean text for TTS (full):', cleanText?.length, 'chars');
 
       if (cleanText) {
-        // Si TTS a déjà commencé en chunking, arrêter et relire tout
-        if (ttsStarted && ttsManager.isSpeaking()) {
-          console.log('[HandsFree] Stopping partial TTS to read full message');
-          ttsManager.stop();
-          // Petit délai pour s'assurer que le TTS est bien arrêté
-          await new Promise(resolve => setTimeout(resolve, 100));
+        // TTS ne démarre qu'après la fin complète de la génération
+        console.log('[HandsFree] Starting TTS for response, length:', cleanText.length);
+        console.log('[HandsFree] ttsManager available:', !!ttsManager);
+        
+        if (!ttsManager) {
+          console.warn('[HandsFree] TTS manager not initialized, initializing now...');
+          await initTTS();
         }
         
-        setState(STATES.SPEAKING);
-        try {
-          await speakStreaming(cleanText, (progressText) => {
-            console.log('[HandsFree] TTS progress:', progressText.length, 'chars');
-          });
-        } catch (ttsErr) {
-          if (ttsErr !== 'interrupted') {
-            console.error('[HandsFree] TTS error:', ttsErr);
+        if (ttsManager) {
+          setState(STATES.SPEAKING);
+          try {
+            await speakStreaming(cleanText, (progressText) => {
+              console.log('[HandsFree] TTS progress:', progressText.length, 'chars');
+            });
+          } catch (ttsErr) {
+            if (ttsErr !== 'interrupted') {
+              console.error('[HandsFree] TTS error:', ttsErr);
+            }
           }
+        } else {
+          console.error('[HandsFree] TTS manager still not available after init');
+          showError('TTS non disponible. Vérifiez que votre navigateur supporte la synthèse vocale.');
         }
       }
       
-      // Reprendre l'écoute après TTS
-      if (handsFreeEnabled) {
-        startListening();
-      }
+      // Reprendre l'écoute après TTS (géré par speakStreaming)
     } else {
-      console.log('[HandsFree] No TTS manager or no response');
+      console.log('[HandsFree] No response text');
       setState(STATES.LISTENING);
       if (handsFreeEnabled) {
         startListening();
@@ -1559,7 +1852,7 @@ async function sendTranscript() {
     
     // Log des mesures de performance finales
     const totalTime = Date.now() - startTime;
-    console.log(`[HandsFree] Performance: total=${totalTime}ms, ttft=${firstTokenTime ? firstTokenTime - startTime : 'N/A'}ms, ttfst=${firstSpeechTime ? firstSpeechTime - startTime : 'N/A'}ms`);
+    console.log(`[HandsFree] Performance: total=${totalTime}ms, ttft=${firstTokenTime ? firstTokenTime - startTime : 'N/A'}ms`);
   } catch (err) {
     clearTimeout(timeoutId);
     console.error('[HandsFree] Error in sendTranscript:', err);
@@ -1647,6 +1940,16 @@ function setState(state) {
   if (stateLabel) {
     stateLabel.textContent = config.stateLabel;
   }
+  // Animation de pulsation pour STT
+  const sttPulse = document.getElementById('hf-stt-pulse');
+  if (sttPulse) {
+    if (state === STATES.LISTENING && config.pulse) {
+      sttPulse.className = 'absolute inset-0 rounded-full bg-green-400 opacity-20 animate-ping';
+    } else {
+      sttPulse.className = 'absolute inset-0 rounded-full opacity-0 pointer-events-none';
+    }
+  }
+  
   if (micIcon) {
     // SVG elements require setAttribute for class
     const classValue = `w-10 h-10 ${config.micColor} transition-colors`;
@@ -1695,13 +1998,36 @@ function updateSendButton() {
 /**
  * Affiche une erreur
  */
-function showError(message) {
+function showError(message, recoverable = false) {
   const errorDiv = document.getElementById('hf-error');
   const errorText = document.getElementById('hf-error-text');
+  
   if (errorDiv && errorText) {
+    // Nettoyer le contenu précédent (supprimer les boutons de réessai existants)
+    const existingRetry = errorText.querySelector('.retry-btn');
+    if (existingRetry) {
+      existingRetry.remove();
+    }
+    
     errorText.textContent = message;
     errorDiv.classList.remove('hidden');
+    
+    // Ajouter bouton réessai si récupérable
+    if (recoverable) {
+      const retryBtn = document.createElement('button');
+      retryBtn.textContent = 'Réessayer';
+      retryBtn.className = 'retry-btn ml-2 px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors';
+      retryBtn.onclick = () => {
+        errorDiv.classList.add('hidden');
+        if (handsFreeEnabled) {
+          startListening();
+        }
+      };
+      errorText.appendChild(retryBtn);
+    }
   }
+  
+  console.error('[HandsFree] Error:', message);
 }
 
 /**
@@ -1736,7 +2062,7 @@ function renderMessages() {
     return;
   }
 
-  container.innerHTML = history.map(msg => {
+  container.innerHTML = history.map((msg, msgIdx) => {
     const isUser = msg.role === 'user';
     return `
       <div class="flex ${isUser ? 'justify-end' : 'justify-start'}" data-message-id="${msg.id}">
@@ -1746,13 +2072,56 @@ function renderMessages() {
           </div>
           ${msg.sources?.length ? `
             <div class="mt-2 pt-2 border-t ${isUser ? 'border-purple-500' : 'border-gray-200'}">
-              <p class="text-xs ${isUser ? 'text-purple-200' : 'text-gray-500'}">Sources: ${msg.sources.map(s => s.docName || s.source).join(', ')}</p>
+              <details class="cursor-pointer">
+                <summary class="text-xs ${isUser ? 'text-purple-200' : 'text-gray-500'} font-medium hover:${isUser ? 'text-purple-100' : 'text-gray-700'}">
+                  ${msg.sources.length} source(s) - Cliquez pour voir les détails
+                </summary>
+                <div class="mt-2 space-y-2">
+                  ${msg.sources.map((s, i) => `
+                    <div class="bg-${isUser ? 'purple' : 'gray'}-50 p-2 rounded-lg border border-${isUser ? 'purple' : 'gray'}-200">
+                      <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-semibold ${isUser ? 'text-purple-800' : 'text-gray-700'}">
+                          [${i + 1}] ${s.docName || s.source} - Doc${s.docIndex || '?'}:Chunk${s.chunkIndex || '?'}
+                        </span>
+                        ${s.score ? `<span class="text-xs ${isUser ? 'text-purple-600' : 'text-gray-500'}">${(s.score * 100).toFixed(0)}%</span>` : ''}
+                      </div>
+                      ${s.text ? `
+                        <p class="text-xs ${isUser ? 'text-purple-700' : 'text-gray-600'} line-clamp-2 mb-2">${s.text.substring(0, 150)}${s.text.length > 150 ? '...' : ''}</p>
+                      ` : ''}
+                      <button 
+                        data-source-index="${i}"
+                        data-msg-id="${msg.id}"
+                        class="chunk-viewer-btn text-xs ${isUser ? 'text-purple-600 hover:text-purple-800' : 'text-blue-600 hover:text-blue-800'} font-medium underline"
+                      >
+                        Voir le chunk complet →
+                      </button>
+                    </div>
+                  `).join('')}
+                </div>
+              </details>
             </div>
           ` : ''}
         </div>
       </div>
     `;
   }).join('');
+  
+  // Attacher les event listeners pour les boutons chunk viewer
+  container.querySelectorAll('.chunk-viewer-btn').forEach((btn, btnIdx) => {
+    btn.addEventListener('click', () => {
+      const sourceIndex = parseInt(btn.getAttribute('data-source-index'));
+      const msgElement = btn.closest('[data-message-id]');
+      if (!msgElement) return;
+      
+      const msgId = msgElement.getAttribute('data-message-id');
+      const history = getChatHistoryRef('primary');
+      const msg = history.find(m => m.id === msgId);
+      
+      if (msg && msg.sources && msg.sources[sourceIndex]) {
+        showChunkViewer(msg.sources[sourceIndex]);
+      }
+    });
+  });
 
   container.scrollTop = container.scrollHeight;
 }

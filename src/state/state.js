@@ -25,9 +25,15 @@ export const state = {
     topN: 5, // Nombre de chunks à récupérer pour RAG
     debugMode: false,
     sttLang: 'fr-FR', // Langue pour Speech-to-Text
+    ttsEngine: 'web-speech', // 'xtts', 'web-speech', ou ID du modèle (bark, kokoro, etc.)
+    ttsModel: 'kokoro', // Modèle TTS open source (bark, parler-large, speecht5-large, parler-mini, kokoro, speecht5-base)
+    ttsVoice: null, // ID de la voix pour le modèle sélectionné
     ttsRate: 1.0, // Vitesse TTS
     silenceDelay: 2000 // Délai silence en ms pour mode conversation
   },
+  
+  // Statuts de validation des modèles TTS
+  ttsModelStatus: {},
   
   // État du modèle LLM
   model: {

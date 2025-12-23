@@ -5,10 +5,16 @@
 import { isSTTSupported, createSpeechRecognition, createSpeechDetector } from '../voice/speechRecognition.js';
 import { isTTSSupported, createTTSManager, getVoices, getBestVoicesForLang, SUPPORTED_LANGUAGES } from '../voice/speechSynthesis.js';
 import { getKokoroVoices, initKokoroTTS, isKokoroReady } from '../voice/kokoroTTS.js';
+import { createXTTSClient } from '../audio/ttsProviders.js';
 import { getChatHistoryRef, sendMessage, addMessage } from '../llm/chat.js';
 import { isModelReady, initWebLLM, getLoadedModel, getOralOptimizedModels } from '../llm/webllm.js';
 import { parseMarkdown } from '../utils/markdown.js';
 import { showChunkViewer } from './ChunkViewer.js';
+import { showSettingsPanel } from './SettingsPanel.js';
+import { speak as speakOpenSource, initTTSModel, isModelReady as isTTSModelReady } from '../voice/ttsEngine.js';
+import { getModelById, TTS_MODELS } from '../voice/ttsModels.js';
+import { state } from '../state/state.js';
+import { validateAllModels, isModelAvailable, getModelStatus } from '../voice/ttsModelValidator.js';
 
 // États possibles
 const STATES = {
@@ -23,38 +29,73 @@ let handsFreeEnabled = false;
 let conversationMode = false; // Mode conversation automatique
 let recognition = null;
 let ttsManager = null;
+let xttsClient = null; // Client XTTS-v2
 let speechDetector = null;
 let currentTranscript = '';
 let silenceTimeout = null;
 const SILENCE_DELAY = 3000; // 3s de silence avant envoi auto
 let useKokoroTTS = false; // Utiliser Kokoro TTS ou voix native
+// Charger le moteur TTS depuis les settings
+let useXTTS = (() => {
+  const savedSettings = localStorage.getItem('appSettings');
+  if (savedSettings) {
+    try {
+      const parsed = JSON.parse(savedSettings);
+      return parsed.ttsEngine === 'xtts';
+    } catch (e) {
+      return false; // Par défaut Web Speech API
+    }
+  }
+  return false; // Par défaut Web Speech API (plus fiable)
+})();
 let interruptCountdownInterval = null; // Interval pour le compte à rebours d'interruption
 let spaceKeyListener = null; // Listener pour raccourci ESPACE
+let spaceKeyDebounceTimeout = null; // Debounce pour ESPACE
+let modelsValidated = false; // Flag pour savoir si les modèles ont été validés
 
-// System prompt optimisé pour réponses orales avec citations et diversité
-const ORAL_SYSTEM_PROMPT = `Tu es un assistant vocal conversationnel. Réponds en français.
+// System prompt optimisé pour réponses orales avec citations et diversité - TAILLE FLEXIBLE
+const ORAL_SYSTEM_PROMPT = `Tu es un assistant vocal conversationnel. Réponds en français, de manière ORALE et NATURELLE.
 
-RÈGLES STRICTES (PRIORITÉ ABSOLUE) :
-- MAXIMUM 2-3 phrases courtes (30-50 mots total)
-- Réponse complète mais ultra-synthétique
-- Ton oral, direct, naturel
-- Pas de listes, pas de markdown, pas de structure complexe
-- Si information manque : finir par 1 question courte (5-10 mots max)
-- Ne JAMAIS couper ta réponse au milieu d'une phrase
-- Utilise des expressions naturelles ("ah je vois", "d'accord", "effectivement")
+RÈGLE ABSOLUE : TOUJOURS RÉPONDRE EN PHRASES ORALES, JAMAIS DE TABLEAUX MARKDOWN, JAMAIS DE LISTES À PUCES BRUTES
+
+ADAPTATION INTELLIGENTE DE LA LONGUEUR :
+- Plus il y a de contexte/d'informations, plus la réponse sera longue (mais toujours optimisée)
+- Questions simples → 2-3 phrases courtes (30-60 mots)
+- Questions complexes → 5-8 phrases (100-200 mots)
+- Beaucoup de contexte → 10-15 phrases (200-400 mots)
+- TOUJOURS complète et optimisée, jamais tronquée
+
+STYLE ORAL OPTIMISÉ :
+- Phrases complètes avec liaisons naturelles ("c'est-à-dire", "autrement dit", "en effet")
+- Ponctuation orale : virgules pour pauses, points pour conclusions
+- Transitions fluides : "d'abord", "ensuite", "enfin", "par ailleurs"
+- Expressions naturelles : "ah je vois", "effectivement", "d'accord", "c'est intéressant"
+- Éviter les listes numérotées brutes : transformer en phrases liées
+- Éviter les tableaux : présenter les informations en phrases structurées
+
+EXEMPLE BON (oral, naturel) :
+"Ah je vois, Wavestone se présente comme une entreprise centrée sur l'humain [Doc1:Chunk5]. Ils sont engagés dans la responsabilité sociale et environnementale, ce qui se traduit par plusieurs initiatives concrètes [Doc1:Chunk6]. Par ailleurs, leur approche de la transformation digitale s'appuie sur l'accompagnement personnalisé des clients [Doc1:Chunk7]."
+
+EXEMPLE MAUVAIS (à éviter) :
+"Voici un tableau :
+| Point | Description |
+|-------|-------------|
+| Vision | Centrée sur l'humain |"
+
+TRANSFORMER EN :
+"Leur vision est centrée sur l'humain, avec un engagement fort en responsabilité sociale et environnementale. Ils accompagnent la transformation digitale de manière personnalisée."
 
 CITATIONS ET DIVERSITÉ :
-- Cite UNE source [Doc1:Chunk2] par phrase importante (maximum 2 citations)
-- Privilégie la diversité : cherche dans plusieurs documents différents
-- Si plusieurs documents : mentionne-les brièvement en 1 phrase
+- Cite les sources [Doc1:Chunk2] naturellement dans le flux de la phrase
+- Privilégie la diversité : cherche dans plusieurs documents
+- Si plusieurs documents : mentionne-les oralement
 
-EXEMPLE BONNE RÉPONSE :
-"Ah je vois, Wavestone se présente comme une entreprise centrée sur l'humain [Doc1:Chunk5]. Ils sont engagés dans la responsabilité sociale et environnementale [Doc1:Chunk6]."
-
-EXEMPLE MAUVAISE RÉPONSE (TROP LONGUE) :
-"Il semble que vous cherchiez des informations sur Wavestone, une entreprise qui se déclare éthique et citoyenne. Voici les points clés que j'ai trouvés dans le document : * Wavestone se présente comme..."
-
-Sois ultra-synthétique, direct, et termine toujours ta phrase complètement.`;
+IMPORTANT :
+- Ne JAMAIS utiliser de format markdown (tableaux, listes à puces brutes)
+- Toujours des phrases complètes et liées
+- Optimiser pour le parlé : liaisons, ponctuation, fluidité
+- Plus de contexte = réponse plus longue mais toujours complète et optimisée
+- Toujours terminer la réponse, jamais de coupure au milieu`;
 
 // Config par défaut
 let voiceConfig = {
@@ -81,15 +122,50 @@ export function createHandsFreePanel() {
     <div class="flex flex-col w-full md:w-80 border-r-0 md:border-r border-gray-200 border-b md:border-b-0 flex-shrink-0 max-h-[40vh] md:max-h-none overflow-y-auto">
       <!-- Header -->
       <div class="flex-shrink-0 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-indigo-50">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-sm">
-            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
-            </svg>
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-sm">
+              <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+              </svg>
+            </div>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Mode Hands-Free</h2>
+              <p id="hf-status-text" class="text-xs text-gray-500">Inactif</p>
+            </div>
           </div>
-          <div>
-            <h2 class="text-sm font-bold text-gray-900">Mode Hands-Free</h2>
-            <p id="hf-status-text" class="text-xs text-gray-500">Inactif</p>
+        </div>
+        
+        <!-- Mode Toggle (Web/Serveur) - GROSSE FEATURE -->
+        <div class="flex items-center gap-3 px-4 py-3 bg-white rounded-lg border-2 border-gray-200 shadow-md">
+          <div class="flex items-center gap-3 flex-1">
+            <div class="flex items-center gap-2.5">
+              <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-sm"></div>
+              <span class="text-sm font-bold text-gray-900">Web</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-not-allowed flex-1 justify-center" title="Mode Serveur (à venir)">
+              <input type="checkbox" id="hf-server-mode-toggle" class="sr-only peer" disabled>
+              <div class="w-14 h-7 bg-gray-200 rounded-full peer peer-checked:bg-gray-400 transition-colors duration-300 ease-in-out opacity-50 relative shadow-inner">
+                <div class="absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow-lg transform transition-transform duration-300 ease-in-out peer-checked:translate-x-7 border border-gray-200"></div>
+              </div>
+            </label>
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold text-gray-500">Serveur</span>
+              <div class="group relative">
+                <svg class="w-5 h-5 text-gray-400 cursor-help hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <div class="absolute bottom-full right-0 mb-3 w-64 p-3 bg-gray-900 text-white text-sm rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-2xl">
+                  <div class="flex items-center gap-2 mb-2">
+                    <span class="px-2 py-1 bg-yellow-500 text-yellow-900 text-xs font-bold rounded">BONUS</span>
+                    <span class="font-bold">Mode Serveur</span>
+                  </div>
+                  <div class="text-gray-300 leading-relaxed text-xs">
+                    TTS hébergé sur serveur pour une meilleure qualité vocale et des voix personnalisées. Fonctionnalité à venir.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -133,6 +209,51 @@ export function createHandsFreePanel() {
 
       <!-- Main Toggle Button -->
       <div class="flex-1 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-gray-50 to-white">
+        <!-- Message informatif sur les voix -->
+        <div id="hf-voice-info" class="mb-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 hidden">
+          <div class="flex items-start gap-2">
+            <svg class="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <div class="text-xs text-gray-700 flex-1">
+              <p class="font-semibold text-blue-900 mb-1">💡 À propos des voix TTS</p>
+              <p class="text-gray-600 mb-2">Le système utilise actuellement : <span id="hf-current-voice" class="font-medium text-indigo-700">Web Speech API (voix système)</span></p>
+              <p class="text-gray-600 mb-2">Pour utiliser une voix personnalisée :</p>
+              <ol class="list-decimal list-inside space-y-1 ml-2 text-gray-600">
+                <li>Ouvrez les <strong>Paramètres</strong> (icône ⚙️ en haut à droite)</li>
+                <li>Sélectionnez un modèle TTS open source (MAX, MEDIUM, ou RAPIDE)</li>
+                <li>Choisissez une voix dans le sélecteur</li>
+                <li>Les modèles open source fonctionnent directement dans le navigateur (pas de serveur requis)</li>
+              </ol>
+              <p class="text-gray-600 mt-2 text-xs italic">Note : Pour votre voix personnalisée (Lucas), sélectionnez "XTTS-v2" et lancez le serveur.</p>
+              <button id="hf-open-settings" class="mt-2 text-xs text-blue-700 hover:text-blue-900 font-medium underline">
+                Ouvrir les Paramètres →
+              </button>
+            </div>
+            <button id="hf-close-voice-info" class="text-gray-400 hover:text-gray-600">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        
+        <!-- Indicateur de progression du chargement du modèle -->
+        <div id="hf-model-loading" class="mb-4 p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg border border-indigo-200 hidden w-full max-w-sm">
+          <div class="flex items-center gap-3">
+            <div class="flex-shrink-0">
+              <div class="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+            </div>
+            <div class="flex-1">
+              <p class="text-xs font-medium text-indigo-900" id="hf-model-loading-text">Chargement du modèle...</p>
+              <div class="mt-1.5 w-full bg-indigo-200 rounded-full h-1.5">
+                <div id="hf-model-loading-bar" class="bg-indigo-600 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+              </div>
+              <p class="text-xs text-indigo-600 mt-1" id="hf-model-loading-percent">0%</p>
+            </div>
+          </div>
+        </div>
+        
         <button id="hf-toggle-btn" class="relative w-32 h-32 rounded-full bg-gray-100 hover:bg-gray-200 transition-all duration-300 flex items-center justify-center group ${!sttSupported ? 'opacity-50 cursor-not-allowed' : ''}" ${!sttSupported ? 'disabled' : ''}>
           <div id="hf-pulse-ring" class="absolute inset-0 rounded-full opacity-0"></div>
           <svg id="hf-mic-icon" class="w-16 h-16 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -237,28 +358,9 @@ export function createHandsFreePanel() {
 
   setTimeout(async () => {
     setupHandsFreeEvents(panel);
-    await initTTS();
     renderMessages();
-    // Charger automatiquement le meilleur modèle optimisé pour l'oral
-    autoLoadBestOralModel();
     // Exposer showChunkViewer globalement pour les onclick
     window.showChunkViewer = showChunkViewer;
-    
-    // Lancer le diagnostic au démarrage
-    const diagnostics = await runStartupDiagnostics();
-    
-    // Tester la reconnaissance si STT est supporté
-    if (diagnostics.sttSupported && diagnostics.micPermission !== 'denied') {
-      // Tester la reconnaissance après un court délai pour laisser le temps au TTS de finir
-      setTimeout(async () => {
-        const recognitionTest = await testRecognition();
-        if (recognitionTest) {
-          console.log('[HandsFree] Recognition test passed');
-        } else {
-          console.warn('[HandsFree] Recognition test failed or timeout');
-        }
-      }, 2000);
-    }
     
     // Écouter les messages ajoutés au chat pour synchroniser l'historique
     window.addEventListener('chat:messageAdded', (e) => {
@@ -274,6 +376,34 @@ export function createHandsFreePanel() {
   });
 
   // Écouter les changements de modèle
+  // Écouter les changements de settings
+  window.addEventListener('settings:updated', async (e) => {
+    const newSettings = e.detail;
+    console.log('[HandsFree] Settings updated:', newSettings);
+    
+    // Si le moteur TTS a changé, recharger
+    const newUseXTTS = newSettings.ttsEngine === 'xtts';
+    if (newUseXTTS !== useXTTS) {
+      console.log('[HandsFree] TTS engine changed:', useXTTS, '→', newUseXTTS);
+      useXTTS = newUseXTTS;
+      
+      // Réinitialiser le TTS
+      ttsManager = null;
+      xttsClient = null;
+      
+      // Réinitialiser si Hands-Free est actif
+      if (handsFreeEnabled) {
+        await initTTS();
+      }
+    }
+    
+    // Mettre à jour la vitesse TTS si disponible
+    if (newSettings.ttsRate && ttsManager) {
+      // Note: Web Speech API ne supporte pas directement la vitesse, mais on peut l'utiliser pour XTTS
+      console.log('[HandsFree] TTS rate updated:', newSettings.ttsRate);
+    }
+  });
+  
   window.addEventListener('webllm:ready', (e) => {
     if (e.detail?.slot === 'primary') {
       // Modèle chargé, prêt pour Hands-Free
@@ -340,18 +470,27 @@ async function runStartupDiagnostics() {
   
   console.log('[HandsFree] Running startup diagnostics...');
   
-  // Test TTS
+  // Vérifier TTS (sans test vocal - juste vérifier la disponibilité)
   if (diagnostics.ttsSupported && ttsManager) {
-    try {
-      await ttsManager.speak('Test de la voix');
-      diagnostics.ttsWorking = true;
-      console.log('[Diagnostic] TTS test successful');
-    } catch (e) {
-      console.error('[Diagnostic] TTS test failed:', e);
-    }
+    // Vérifier que le TTS manager est bien initialisé
+    diagnostics.ttsWorking = true;
+    console.log('[Diagnostic] TTS manager initialized');
   } else if (diagnostics.ttsSupported && !ttsManager) {
     // TTS supporté mais pas encore initialisé
     console.warn('[Diagnostic] TTS supported but not initialized yet');
+  }
+  
+  // Vérifier XTTS si disponible
+  if (useXTTS && xttsClient) {
+    try {
+      const available = await xttsClient.isAvailable();
+      if (available) {
+        diagnostics.ttsWorking = true;
+        console.log('[Diagnostic] XTTS available');
+      }
+    } catch (e) {
+      console.warn('[Diagnostic] XTTS check failed:', e);
+    }
   }
   
   // Vérifier permissions microphone
@@ -409,6 +548,35 @@ async function runStartupDiagnostics() {
 }
 
 /**
+ * Affiche l'indicateur de progression du chargement du modèle
+ * @param {string} modelName - Nom du modèle en cours de chargement
+ * @param {number} percentage - Pourcentage de progression (0-100)
+ */
+function showModelLoadingProgress(modelName, percentage) {
+  const loadingEl = document.getElementById('hf-model-loading');
+  const textEl = document.getElementById('hf-model-loading-text');
+  const barEl = document.getElementById('hf-model-loading-bar');
+  const percentEl = document.getElementById('hf-model-loading-percent');
+  
+  if (loadingEl) {
+    loadingEl.classList.remove('hidden');
+    if (textEl) textEl.textContent = `Chargement de ${modelName}...`;
+    if (barEl) barEl.style.width = `${percentage}%`;
+    if (percentEl) percentEl.textContent = `${percentage}%`;
+  }
+}
+
+/**
+ * Cache l'indicateur de progression du chargement du modèle
+ */
+function hideModelLoadingProgress() {
+  const loadingEl = document.getElementById('hf-model-loading');
+  if (loadingEl) {
+    loadingEl.classList.add('hidden');
+  }
+}
+
+/**
  * Initialise le TTS
  */
 async function initTTS() {
@@ -417,11 +585,25 @@ async function initTTS() {
     return;
   }
 
-  console.log('[HandsFree] Initializing TTS...');
+  if (ttsManager) {
+    console.log('[HandsFree] TTS already initialized');
+    return;
+  }
+
+  // Utiliser les settings ou valeurs par défaut
+  const settings = state.settings || {};
+  const lang = settings.ttsLang || voiceConfig.lang || 'fr-FR';
+  const voiceName = settings.ttsVoiceName || voiceConfig.voiceName || null; // null = voix système par défaut
+  
+  console.log('[HandsFree] Initializing TTS with voice:', voiceName || 'SYSTÈME (par défaut)');
 
   // TTS Manager simple
   ttsManager = createTTSManager({
-    ...voiceConfig,
+    lang,
+    rate: settings.ttsRate || voiceConfig.rate || 1.0,
+    pitch: settings.ttsPitch || voiceConfig.pitch || 1.0,
+    volume: settings.ttsVolume || 1.0,
+    voiceName: voiceName, // null = première voix disponible pour la langue
     onStart: () => {
       console.log('[HandsFree] TTS started');
       setState(STATES.SPEAKING);
@@ -503,24 +685,97 @@ async function initTTS() {
     }
   });
 
-  // Charger les voix disponibles
-  await loadVoiceOptions();
-  console.log('[HandsFree] TTS initialized');
-  
-  // Test automatique après chargement des voix
-  if (ttsManager) {
+  // Vérifier le moteur TTS sélectionné dans les settings
+  const ttsEngine = state.settings.ttsEngine;
+  const ttsModel = state.settings.ttsModel;
+  const ttsVoice = state.settings.ttsVoice;
+
+  // Initialiser XTTS client seulement si activé dans les settings
+  if (ttsEngine === 'xtts') {
+    useXTTS = true;
+    xttsClient = createXTTSClient({ endpoint: "http://localhost:5055/tts" });
+    console.log('[HandsFree] XTTS client créé (voix Lucas)');
+    
     try {
-      await ttsManager.speak('Système vocal initialisé');
-      console.log('[HandsFree] TTS test successful');
+      const available = await xttsClient.isAvailable();
+      if (available) {
+        console.log('[HandsFree] ✅ XTTS disponible - Votre voix (Lucas) sera utilisée');
+        console.log('[HandsFree] Serveur XTTS: http://localhost:5055');
+      } else {
+        console.warn('[HandsFree] ⚠️ Serveur XTTS non disponible, fallback vers Web Speech API');
+        console.warn('[HandsFree] Pour utiliser votre voix, lancez: npm run tts:server');
+        useXTTS = false;
+      }
     } catch (e) {
-      console.error('[HandsFree] TTS test failed:', e);
-      showError('TTS non fonctionnel. Vérifiez les paramètres audio.', false);
+      console.warn('[HandsFree] ⚠️ Vérification XTTS échouée, fallback Web Speech:', e);
+      useXTTS = false;
     }
+  } else {
+    useXTTS = false;
+    console.log('[HandsFree] XTTS désactivé - utilisation de Web Speech API ou modèle open source');
   }
+
+  // Charger les voix disponibles pour Web Speech API
+  await loadVoiceOptions();
+  
+  // Si un modèle open source est sélectionné, le précharger
+  if (ttsEngine === 'open-source' && ttsModel) {
+    const model = getModelById(ttsModel);
+    if (model) {
+      console.log(`[HandsFree] ✅ Modèle ${model.name} sélectionné - WebGPU activé (${model.size}GB)`);
+      console.log('[HandsFree] Préchargement du modèle...');
+      
+      try {
+        // Vérifier si le modèle est disponible (validé)
+        if (!isModelAvailable(ttsModel)) {
+          const status = getModelStatus(ttsModel);
+          if (status && status.status === 'unavailable') {
+            console.warn(`[HandsFree] ⚠️ Modèle ${model.name} non disponible: ${status.error || 'Non supporté'}`);
+            console.warn('[HandsFree] Fallback vers Web Speech API');
+            hideModelLoadingProgress();
+            return;
+          }
+          // Si non validé, on essaie quand même (validation en cours ou pas encore faite)
+          console.log(`[HandsFree] ⚠️ Modèle ${model.name} non encore validé, tentative de chargement...`);
+        }
+        
+        // Précharger le modèle en arrière-plan
+        if (!isTTSModelReady(ttsModel)) {
+          console.log(`[HandsFree] Chargement du modèle ${model.name}...`);
+          showModelLoadingProgress(model.name, 0);
+          
+          await initTTSModel(ttsModel, ttsVoice, (progress) => {
+            // progress est maintenant un nombre (0-100) grâce à formatProgressCallback
+            const percentage = typeof progress === 'number' ? progress : 0;
+            console.log(`[HandsFree] Chargement modèle: ${percentage}%`);
+            showModelLoadingProgress(model.name, percentage);
+          });
+          
+          hideModelLoadingProgress();
+          console.log(`[HandsFree] ✅ Modèle ${model.name} chargé et prêt`);
+        } else {
+          hideModelLoadingProgress();
+          console.log(`[HandsFree] ✅ Modèle ${model.name} déjà chargé`);
+        }
+      } catch (e) {
+        hideModelLoadingProgress();
+        console.error(`[HandsFree] ❌ Erreur lors du chargement du modèle ${model.name}:`, e);
+        console.warn('[HandsFree] Fallback vers Web Speech API');
+      }
+    } else {
+      console.warn(`[HandsFree] ⚠️ Modèle ${ttsModel} non trouvé, fallback Web Speech API`);
+    }
+  } else if (ttsEngine === 'web-speech' || !ttsEngine) {
+    // Web Speech API par défaut
+    console.log('[HandsFree] ✅ Web Speech API ready (voix système)');
+  }
+  
+  console.log('[HandsFree] ✅ TTS initialized (Web Speech API - voix système par défaut)');
 }
 
 /**
- * Parle en streaming (phrase par phrase) avec bulle animée (SIMPLIFIÉ)
+ * Parle en streaming (phrase par phrase) avec bulle animée
+ * Utilise le modèle TTS sélectionné (open source, XTTS, ou Web Speech API)
  */
 async function speakStreaming(text, onSentenceSpoken) {
   if (!text) {
@@ -528,9 +783,30 @@ async function speakStreaming(text, onSentenceSpoken) {
     return;
   }
   
-  if (!ttsManager) {
-    console.error('[HandsFree] speakStreaming: ttsManager not initialized');
-    // Essayer de réinitialiser
+  // Détecter le moteur TTS à utiliser depuis les settings
+  const ttsEngine = state.settings.ttsEngine;
+  const ttsModel = state.settings.ttsModel;
+  const ttsVoice = state.settings.ttsVoice;
+  
+  // Vérifier si un modèle TTS open source est sélectionné
+  // Accepter aussi si ttsModel existe directement (compatibilité)
+  const useOpenSource = (ttsEngine === 'open-source' || (ttsModel && TTS_MODELS[ttsModel])) 
+                        && ttsModel && getModelById(ttsModel);
+  
+  console.log('[HandsFree] TTS Engine:', ttsEngine, 'Model:', ttsModel, 'UseOpenSource:', useOpenSource);
+  
+  // Vérifier disponibilité XTTS (si sélectionné)
+  if (ttsEngine === 'xtts' && useXTTS && xttsClient) {
+    const available = await xttsClient.isAvailable();
+    if (!available) {
+      console.warn('[HandsFree] XTTS indisponible, bascule vers Web Speech API');
+      useXTTS = false;
+    }
+  }
+  
+  // S'assurer qu'au moins Web Speech API est disponible comme fallback
+  if (!useOpenSource && ttsEngine !== 'xtts' && !ttsManager) {
+    console.error('[HandsFree] speakStreaming: ttsManager not initialized, initializing...');
     await initTTS();
     if (!ttsManager) {
       console.error('[HandsFree] speakStreaming: failed to initialize TTS');
@@ -565,7 +841,130 @@ async function speakStreaming(text, onSentenceSpoken) {
     updateStreamingBubble(bubble, trimmedSentence, currentSentenceIndex, sentences.length);
     
     try {
-      await ttsManager.speak(trimmedSentence);
+      // Essayer le modèle TTS open source d'abord si sélectionné
+      let usedTTS = false;
+      
+      if (useOpenSource) {
+        try {
+          const model = getModelById(ttsModel);
+          console.log(`[HandsFree] 🎤 Utilisation de ${model.name}${ttsVoice ? ` - ${model.voices[ttsVoice]?.name || ttsVoice}` : ''}`);
+          
+          setState(STATES.SPEAKING);
+          const spaceHint = document.getElementById('hf-space-hint');
+          if (spaceHint) {
+            spaceHint.classList.remove('hidden');
+          }
+          const ttsIndicator = document.getElementById('hf-tts-indicator');
+          if (ttsIndicator) {
+            ttsIndicator.classList.remove('hidden');
+          }
+          
+          // Initialiser le modèle si nécessaire
+          if (!isTTSModelReady(ttsModel)) {
+            await initTTSModel(ttsModel, ttsVoice, (progress) => {
+              console.log(`[HandsFree] Chargement modèle: ${progress}%`);
+            });
+          }
+          
+          // Générer et jouer l'audio
+          await speakOpenSource(trimmedSentence, ttsModel, ttsVoice);
+          
+          usedTTS = true;
+          
+          // Cacher indicateurs après phrase
+          if (currentSentenceIndex === sentences.length - 1) {
+            if (spaceHint) {
+              spaceHint.classList.add('hidden');
+            }
+            if (ttsIndicator) {
+              ttsIndicator.classList.add('hidden');
+            }
+          }
+        } catch (e) {
+          console.warn('[HandsFree] Erreur modèle TTS open source, fallback:', e);
+        }
+      }
+      
+      // Essayer XTTS si modèle open source non utilisé
+      if (!usedTTS && ttsEngine === 'xtts' && useXTTS && xttsClient) {
+        try {
+          const available = await xttsClient.isAvailable();
+          if (available) {
+            // Utiliser XTTS-v2
+            setState(STATES.SPEAKING);
+            const spaceHint = document.getElementById('hf-space-hint');
+            if (spaceHint) {
+              spaceHint.classList.remove('hidden');
+            }
+            const ttsIndicator = document.getElementById('hf-tts-indicator');
+            if (ttsIndicator) {
+              ttsIndicator.classList.remove('hidden');
+            }
+            
+            console.log('[HandsFree] 🎤 Utilisation de votre voix (Lucas) via XTTS');
+            await xttsClient.speak(trimmedSentence, {
+              language: voiceConfig.lang.split('-')[0] || 'fr',
+              speed: 1.15, // 1.1x-1.2x comme spécifié
+              emotions: false
+            });
+            
+            usedTTS = true;
+            
+            // Cacher indicateurs après phrase (mais pas si d'autres phrases suivent)
+            if (currentSentenceIndex === sentences.length - 1) {
+              if (spaceHint) {
+                spaceHint.classList.add('hidden');
+              }
+              if (ttsIndicator) {
+                ttsIndicator.classList.add('hidden');
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[HandsFree] XTTS error, fallback to Web Speech:', e);
+        }
+      }
+      
+      // Fallback vers Web Speech API si aucun autre TTS n'a été utilisé
+      if (!usedTTS) {
+        if (ttsManager) {
+          // Afficher indicateurs avant de parler
+          setState(STATES.SPEAKING);
+          const spaceHint = document.getElementById('hf-space-hint');
+          if (spaceHint) {
+            spaceHint.classList.remove('hidden');
+          }
+          const ttsIndicator = document.getElementById('hf-tts-indicator');
+          if (ttsIndicator) {
+            ttsIndicator.classList.remove('hidden');
+          }
+          
+          console.log('[HandsFree] 🔊 Utilisation de Web Speech API (voix système)');
+          await ttsManager.speak(trimmedSentence);
+          
+          // Cacher indicateurs après phrase
+          if (currentSentenceIndex === sentences.length - 1) {
+            if (spaceHint) {
+              spaceHint.classList.add('hidden');
+            }
+            if (ttsIndicator) {
+              ttsIndicator.classList.add('hidden');
+            }
+          }
+        } else {
+          console.error('[HandsFree] ⚠️ Aucun TTS disponible - initialisation...');
+          await initTTS();
+          if (ttsManager) {
+            console.log('[HandsFree] TTS initialisé, réessayez de parler');
+            setState(STATES.SPEAKING);
+            await ttsManager.speak(trimmedSentence);
+          } else {
+            console.error('[HandsFree] Impossible d\'initialiser le TTS');
+            break;
+          }
+        }
+      }
+      
       spokenText += trimmedSentence + ' ';
       currentSentenceIndex++;
       
@@ -573,16 +972,44 @@ async function speakStreaming(text, onSentenceSpoken) {
         onSentenceSpoken(spokenText.trim());
       }
     } catch (err) {
-      if (err !== 'interrupted') {
+      if (err !== 'interrupted' && !err.message?.includes('indisponible')) {
         console.error('[HandsFree] TTS streaming error:', err);
+        // Essayer fallback si erreur XTTS
+        if (useXTTS && ttsManager) {
+          console.log('[HandsFree] Tentative fallback Web Speech API...');
+          useXTTS = false;
+          try {
+            await ttsManager.speak(trimmedSentence);
+            spokenText += trimmedSentence + ' ';
+            currentSentenceIndex++;
+            if (onSentenceSpoken) {
+              onSentenceSpoken(spokenText.trim());
+            }
+          } catch (fallbackErr) {
+            console.error('[HandsFree] Fallback aussi échoué:', fallbackErr);
+            break;
+          }
+        } else {
+          break;
+        }
+      } else {
+        break;
       }
-      break;
     }
   }
   
   hideStreamingBubble(bubble);
   
-  // Réactivation automatique gérée par ttsManager.onEnd
+  // Réactivation automatique après TTS
+  if (handsFreeEnabled) {
+    setTimeout(() => {
+      if (handsFreeEnabled && !(useXTTS && xttsClient?.isSpeaking()) && !ttsManager?.isSpeaking()) {
+        startListening();
+      }
+    }, 300);
+  } else {
+    setState(STATES.IDLE);
+  }
 }
 
 /**
@@ -781,6 +1208,82 @@ function setupHandsFreeEvents(panel) {
   const settingsBtn = panel.querySelector('#hf-settings-btn');
   const settingsModal = panel.querySelector('#hf-settings-modal');
   const closeSettings = panel.querySelector('#hf-close-settings');
+  
+  // Gérer le message informatif sur les voix
+  const voiceInfo = panel.querySelector('#hf-voice-info');
+  const closeVoiceInfo = panel.querySelector('#hf-close-voice-info');
+  const openSettingsBtn = panel.querySelector('#hf-open-settings');
+  const currentVoiceSpan = panel.querySelector('#hf-current-voice');
+  
+  // Fermer le message informatif
+  closeVoiceInfo?.addEventListener('click', () => {
+    if (voiceInfo) {
+      voiceInfo.classList.add('hidden');
+      localStorage.setItem('hf-voice-info-dismissed', 'true');
+    }
+  });
+  
+  // Ouvrir les settings depuis le message
+  openSettingsBtn?.addEventListener('click', () => {
+    showSettingsPanel();
+    // Scroll vers la section voix
+    setTimeout(() => {
+      const ttsEngineSelect = document.querySelector('#tts-engine-select');
+      if (ttsEngineSelect) {
+        ttsEngineSelect.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        ttsEngineSelect.focus();
+      }
+    }, 300);
+  });
+  
+  // Afficher le message si pas déjà fermé
+  if (voiceInfo && !localStorage.getItem('hf-voice-info-dismissed')) {
+    voiceInfo.classList.remove('hidden');
+  }
+  
+  // Mettre à jour l'affichage de la voix actuelle
+  function updateCurrentVoiceDisplay() {
+    if (currentVoiceSpan) {
+      const ttsEngine = state.settings.ttsEngine;
+      const ttsModel = state.settings.ttsModel;
+      const ttsVoice = state.settings.ttsVoice;
+      
+      if (ttsEngine === 'open-source' && ttsModel) {
+        // Modèle open source sélectionné
+        const model = getModelById(ttsModel);
+        if (model) {
+          const voiceName = ttsVoice && model.voices[ttsVoice] ? model.voices[ttsVoice].name : '';
+          currentVoiceSpan.textContent = `${model.name}${voiceName ? ` - ${voiceName}` : ''} (${model.size}GB)`;
+          currentVoiceSpan.className = 'font-medium text-green-700';
+        } else {
+          currentVoiceSpan.textContent = 'Web Speech API (voix système)';
+          currentVoiceSpan.className = 'font-medium text-indigo-700';
+        }
+      } else if (ttsEngine === 'xtts' && useXTTS && xttsClient) {
+        // Vérifier XTTS de manière asynchrone
+        xttsClient.isAvailable().then(available => {
+          if (available) {
+            currentVoiceSpan.textContent = 'XTTS-v2 (Votre voix - Lucas)';
+            currentVoiceSpan.className = 'font-medium text-green-700';
+          } else {
+            currentVoiceSpan.textContent = 'Web Speech API (voix système)';
+            currentVoiceSpan.className = 'font-medium text-indigo-700';
+          }
+        }).catch(() => {
+          currentVoiceSpan.textContent = 'Web Speech API (voix système)';
+          currentVoiceSpan.className = 'font-medium text-indigo-700';
+        });
+      } else {
+        currentVoiceSpan.textContent = 'Web Speech API (voix système)';
+        currentVoiceSpan.className = 'font-medium text-indigo-700';
+      }
+    }
+  }
+  
+  // Mettre à jour périodiquement
+  setInterval(updateCurrentVoiceDisplay, 3000);
+  updateCurrentVoiceDisplay();
+  
   const langSelect = panel.querySelector('#hf-lang-select');
   const voiceSelect = panel.querySelector('#hf-voice-select');
   const rateSlider = panel.querySelector('#hf-rate-slider');
@@ -1057,19 +1560,48 @@ function setupSpaceKeyListener() {
         return;
       }
       
-      // Si TTS est en cours, couper et réactiver
-      if (ttsManager?.isSpeaking()) {
+      // Si TTS est en cours (Web Speech API ou XTTS), couper et réactiver
+      const isTTSPlaying = (ttsManager?.isSpeaking()) || (useXTTS && xttsClient?.isSpeaking());
+      
+      if (isTTSPlaying) {
         e.preventDefault();
         console.log('[HandsFree] Space pressed - stopping TTS and reactivating mic');
         
-        ttsManager.stop();
+        // Arrêter tous les TTS
+        ttsManager?.stop();
+        xttsClient?.stop();
         
-        // Réactiver le micro immédiatement
+        // Réinitialiser le transcript pour éviter qu'un ancien message soit renvoyé
+        currentTranscript = '';
+        const transcriptEl = document.getElementById('hf-transcript');
+        if (transcriptEl) transcriptEl.value = '';
+        const interimEl = document.getElementById('hf-interim');
+        if (interimEl) interimEl.textContent = '';
+        
+        // Arrêter le timer de silence s'il est actif
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout);
+          silenceTimeout = null;
+        }
+        
+        // Cacher le compte à rebours
+        const countdownEl = document.getElementById('hf-countdown');
+        const cancelBtn = document.getElementById('hf-cancel-btn');
+        if (countdownEl) {
+          countdownEl.classList.add('hidden');
+          countdownEl.textContent = '';
+        }
+        if (cancelBtn) {
+          cancelBtn.classList.add('hidden');
+        }
+        
+        // Réactiver le micro après un court délai
         setTimeout(() => {
           if (handsFreeEnabled) {
+            setState(STATES.LISTENING);
             startListening();
           }
-        }, 100);
+        }, 150);
       }
     }
   };
@@ -1085,6 +1617,10 @@ function removeSpaceKeyListener() {
   if (spaceKeyListener) {
     document.removeEventListener('keydown', spaceKeyListener);
     spaceKeyListener = null;
+  }
+  if (spaceKeyDebounceTimeout) {
+    clearTimeout(spaceKeyDebounceTimeout);
+    spaceKeyDebounceTimeout = null;
   }
 }
 
@@ -1105,7 +1641,65 @@ export async function toggleHandsFree() {
   handsFreeEnabled = !handsFreeEnabled;
 
   if (handsFreeEnabled) {
-    // Vérifier que le modèle est chargé dans primary
+    // INITIALISATION COMPLÈTE AU PREMIER CLIC
+    // Valider les modèles TTS au premier clic (une seule fois)
+    if (!modelsValidated) {
+      console.log('[HandsFree] Validation des modèles TTS au démarrage...');
+      modelsValidated = true;
+      
+      // Émettre un événement pour indiquer que la validation commence
+      window.dispatchEvent(new CustomEvent('tts:validationStarted'));
+      
+      // Valider tous les modèles en arrière-plan (ne pas bloquer l'UI)
+      validateAllModels((modelId, status, error) => {
+        console.log(`[HandsFree] Modèle ${modelId}: ${status}${error ? ` (${error})` : ''}`);
+        // Mettre à jour le statut dans state
+        if (!state.ttsModelStatus) {
+          state.ttsModelStatus = {};
+        }
+        state.ttsModelStatus[modelId] = { status, error, timestamp: Date.now() };
+        
+        // Émettre un événement pour que les autres composants se mettent à jour
+        window.dispatchEvent(new CustomEvent('tts:modelValidated', {
+          detail: { modelId, status, error }
+        }));
+      }).catch(err => {
+        console.error('[HandsFree] Erreur lors de la validation des modèles:', err);
+      }).finally(() => {
+        // Masquer l'indicateur de validation quand terminé
+        window.dispatchEvent(new CustomEvent('tts:validationComplete'));
+      });
+    }
+    
+    // Initialiser TTS si pas déjà fait
+    if (!ttsManager && !xttsClient) {
+      console.log('[HandsFree] Initializing TTS on first activation...');
+      await initTTS();
+      
+      // Vérifier le moteur TTS sélectionné
+      const ttsEngine = state.settings.ttsEngine;
+      const ttsModel = state.settings.ttsModel;
+      
+      if (ttsEngine === 'xtts' && useXTTS && xttsClient) {
+        // Vérifier XTTS seulement si explicitement sélectionné
+        const available = await xttsClient.isAvailable();
+        if (available) {
+          console.log('[HandsFree] ✅ Votre voix (Lucas) est prête via XTTS');
+        } else {
+          console.warn('[HandsFree] ⚠️ Serveur XTTS non disponible - Lancez: npm run tts:server');
+          console.warn('[HandsFree] Utilisation de la voix système en attendant');
+        }
+      } else if (ttsEngine === 'open-source' && ttsModel) {
+        // Modèle open source - pas besoin de serveur
+        const model = getModelById(ttsModel);
+        if (model) {
+          console.log(`[HandsFree] ✅ Modèle ${model.name} sélectionné - WebGPU activé (${model.size}GB)`);
+          console.log('[HandsFree] Aucun serveur requis - fonctionne directement dans le navigateur');
+        }
+      }
+    }
+    
+    // Charger le modèle si pas déjà chargé
     if (!isModelReady('primary')) {
       showError('Chargement du modèle optimisé...');
       // Charger automatiquement le meilleur modèle
@@ -1118,6 +1712,10 @@ export async function toggleHandsFree() {
         return;
       }
     }
+    
+    // Lancer les diagnostics au premier clic
+    const diagnostics = await runStartupDiagnostics();
+    console.log('[HandsFree] Diagnostics:', diagnostics);
     
     // Activer automatiquement le mode conversation
     conversationMode = true;
@@ -1512,11 +2110,55 @@ function stopAll() {
 /**
  * Envoie la transcription au chat
  */
+/**
+ * Détecte la taille de réponse nécessaire selon le message
+ */
+function detectResponseSize(message) {
+  const lowerMessage = message.toLowerCase();
+  
+  // Mots-clés pour réponses longues
+  const longResponseTriggers = [
+    'liste', 'tous les', 'énumère', 'détaille', 'explique en détail',
+    'tableau', 'comparaison', 'différences', 'similitudes',
+    'tout sur', 'beaucoup d\'informations', 'complet', 'exhaustif',
+    'pas à pas', 'étape par étape', 'procédure', 'tutorial',
+    'exemples', 'montre-moi', 'donne-moi le code', 'code',
+    'structure', 'organise', 'sections'
+  ];
+  
+  // Mots-clés pour réponses moyennes
+  const mediumResponseTriggers = [
+    'explique', 'comment', 'pourquoi', 'qu\'est-ce que',
+    'décris', 'parle-moi de', 'raconte'
+  ];
+  
+  // Vérifier réponses longues
+  for (const trigger of longResponseTriggers) {
+    if (lowerMessage.includes(trigger)) {
+      return { size: 'long', maxTokens: 500, description: 'Réponse détaillée' };
+    }
+  }
+  
+  // Vérifier réponses moyennes
+  for (const trigger of mediumResponseTriggers) {
+    if (lowerMessage.includes(trigger)) {
+      return { size: 'medium', maxTokens: 300, description: 'Réponse développée' };
+    }
+  }
+  
+  // Par défaut : réponse courte
+  return { size: 'short', maxTokens: 150, description: 'Réponse synthétique' };
+}
+
 async function sendTranscript() {
   const transcriptEl = document.getElementById('hf-transcript');
   const message = transcriptEl?.value?.trim() || currentTranscript.trim();
 
   if (!message) return;
+  
+  // Détecter la taille de réponse nécessaire
+  const responseConfig = detectResponseSize(message);
+  console.log(`[HandsFree] Response size detected: ${responseConfig.size} (${responseConfig.maxTokens} tokens)`);
 
   if (!isModelReady('primary')) {
     console.error('[HandsFree] Model not ready');
@@ -1627,11 +2269,11 @@ async function sendTranscript() {
     let streamingMessageEl = null;
     
     // Utiliser le slot 'handsfree' avec le modèle dédié Hands-Free
-    // Utiliser le slot 'handsfree' avec le modèle dédié Hands-Free
+    // maxTokens adaptatif selon le type de demande
     const result = await sendMessage(message, {
       systemPrompt: ORAL_SYSTEM_PROMPT,
       temperature: 0.7,
-      maxTokens: 80
+      maxTokens: responseConfig.maxTokens // Adaptatif : 200 (court), 400 (moyen), 800 (long)
     }, (token, full) => {
       // Streaming callback - afficher en temps réel
       streamingActive = true;
@@ -1817,27 +2459,31 @@ async function sendTranscript() {
       if (cleanText) {
         // TTS ne démarre qu'après la fin complète de la génération
         console.log('[HandsFree] Starting TTS for response, length:', cleanText.length);
-        console.log('[HandsFree] ttsManager available:', !!ttsManager);
+        console.log('[HandsFree] XTTS available:', useXTTS && !!xttsClient);
+        console.log('[HandsFree] Web Speech available:', !!ttsManager);
         
-        if (!ttsManager) {
+        // Vérifier disponibilité TTS (XTTS ou Web Speech)
+        if (!useXTTS && !ttsManager) {
           console.warn('[HandsFree] TTS manager not initialized, initializing now...');
           await initTTS();
         }
         
-        if (ttsManager) {
+        // Vérifier qu'on a au moins un TTS disponible
+        const hasTTS = (useXTTS && xttsClient) || ttsManager;
+        if (hasTTS) {
           setState(STATES.SPEAKING);
           try {
             await speakStreaming(cleanText, (progressText) => {
               console.log('[HandsFree] TTS progress:', progressText.length, 'chars');
             });
           } catch (ttsErr) {
-            if (ttsErr !== 'interrupted') {
+            if (ttsErr !== 'interrupted' && !ttsErr.message?.includes('indisponible')) {
               console.error('[HandsFree] TTS error:', ttsErr);
             }
           }
         } else {
-          console.error('[HandsFree] TTS manager still not available after init');
-          showError('TTS non disponible. Vérifiez que votre navigateur supporte la synthèse vocale.');
+          console.error('[HandsFree] TTS not available after init');
+          showError('TTS non disponible. Vérifiez que le serveur XTTS est démarré ou que votre navigateur supporte la synthèse vocale.', true);
         }
       }
       
@@ -2138,5 +2784,6 @@ export function isHandsFreeActive() {
  */
 export function stopTTS() {
   ttsManager?.stop();
+  xttsClient?.stop();
 }
 

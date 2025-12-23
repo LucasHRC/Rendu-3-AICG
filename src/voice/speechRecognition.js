@@ -142,25 +142,40 @@ export function createSpeechRecognition(options = {}) {
 
 /**
  * Détecte si l'utilisateur parle (pour interruption TTS)
- * Retourne true après un délai de parole continue
+ * Amélioré avec meilleure sensibilité et réduction des faux positifs
  */
 export function createSpeechDetector(delayMs = 3000) {
   let speechStartTime = null;
   let isSpeaking = false;
   let speechDuration = 0;
   let delay = delayMs;
+  let speechStreak = 0; // Compteur de détections consécutives pour éviter faux positifs
+  const MIN_STREAK = 2; // Minimum 2 détections consécutives pour confirmer parole
 
   return {
     onSpeechStart() {
-      speechStartTime = Date.now();
-      isSpeaking = true;
-      speechDuration = 0;
+      speechStreak++;
+      
+      // Confirmer parole seulement après MIN_STREAK détections
+      if (speechStreak >= MIN_STREAK && !isSpeaking) {
+        speechStartTime = Date.now();
+        isSpeaking = true;
+        speechDuration = 0;
+      } else if (speechStreak < MIN_STREAK) {
+        // Pas encore confirmé, attendre plus de détections
+        speechStartTime = Date.now(); // Démarrer timer mais pas encore isSpeaking
+      }
     },
     
     onSpeechEnd() {
-      speechStartTime = null;
-      isSpeaking = false;
-      speechDuration = 0;
+      speechStreak = 0; // Reset streak
+      
+      // Ne confirmer fin que si on était vraiment en train de parler
+      if (isSpeaking) {
+        speechStartTime = null;
+        isSpeaking = false;
+        speechDuration = 0;
+      }
     },
     
     shouldInterrupt() {
@@ -183,6 +198,7 @@ export function createSpeechDetector(delayMs = 3000) {
       speechStartTime = null;
       isSpeaking = false;
       speechDuration = 0;
+      speechStreak = 0;
     }
   };
 }

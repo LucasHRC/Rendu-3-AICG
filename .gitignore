@@ -46,3 +46,10 @@ test-*.html
 models/
 *.bin
 *.onnx
+
+# Audio files (potentially large)
+Voix-Lucas.m4a
+
+# TTS server cache
+server_tts/cache/
+server_tts/voices/*.wav

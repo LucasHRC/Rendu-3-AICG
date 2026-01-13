@@ -234,4 +234,3 @@ Cette fonctionnalité est prévue pour le futur mais n'est **pas encore impléme
 ## License
 
 Voir LICENSE dans le repo principal.
-

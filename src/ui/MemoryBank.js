@@ -23,7 +23,7 @@ export function createMemoryBank() {
 
   const refreshButton = document.createElement('button');
   refreshButton.className = 'px-3 py-1 text-sm bg-gray-200 hover:bg-gray-300 rounded transition-colors';
-  refreshButton.textContent = '🔄 Actualiser';
+  refreshButton.textContent = 'Actualiser';
   refreshButton.title = 'Actualiser les statistiques';
   refreshButton.addEventListener('click', () => {
     renderMemoryBank();
@@ -354,7 +354,7 @@ function renderMemoryBank() {
       chunkLeft.className = 'flex items-center gap-2';
       
       const embeddingIcon = document.createElement('span');
-      embeddingIcon.textContent = hasEmbedding ? '🟢' : '⚪';
+      embeddingIcon.textContent = hasEmbedding ? 'OK' : 'X';
       embeddingIcon.title = hasEmbedding ? 'Embedding généré (384D)' : 'Pas encore vectorisé';
       
       const chunkInfo = document.createElement('span');
@@ -423,7 +423,7 @@ function showChunkModal(chunk, hasEmbedding) {
   meta.innerHTML = `
     <span>${chunk.charCount || chunk.text.length} caractères</span>
     <span>•</span>
-    <span>${hasEmbedding ? '🟢 Vectorisé (384D)' : '⚪ Non vectorisé'}</span>
+    <span>${hasEmbedding ? 'Vectorise (384D)' : 'Non vectorise'}</span>
   `;
   
   titleContainer.appendChild(title);

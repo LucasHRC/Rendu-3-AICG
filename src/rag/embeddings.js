@@ -179,23 +179,96 @@ export async function generateEmbedding(text) {
 /**
  * Génère des embeddings pour une liste de chunks
  */
-export async function generateEmbeddingsForChunks(chunks, onProgress = () => {}) {
-  addLog('info', `Génération embeddings pour ${chunks.length} chunks`);
-  const results = [];
+export async function generateEmbeddingsForChunks(chunks, onProgress = () => {}, options = {}) {
+  const {
+    batchSize = 5, // Réduit pour stabilité
+    maxRetries = 3,
+    timeout = 30000, // 30 secondes par chunk
+    onCancel = null,
+    shouldCancel = () => false
+  } = options;
 
-  for (let i = 0; i < chunks.length; i++) {
+  addLog('info', `Génération embeddings pour ${chunks.length} chunks (batch de ${batchSize})`);
+  const results = [];
+  const failedChunks = [];
+
+  // Fonction d'embedding avec timeout et retry
+  const embedWithRetry = async (chunk, retryCount = 0) => {
     try {
-      const vector = await generateEmbedding(chunks[i].text);
-      results.push({
-        chunkId: chunks[i].id,
-        vector: vector
-      });
-      onProgress(i + 1, chunks.length);
+      // Vérifier si annulation demandée
+      if (shouldCancel()) {
+        throw new Error('Annulé par utilisateur');
+      }
+
+      // Timeout wrapper
+      const embedPromise = generateEmbedding(chunk.text);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout')), timeout)
+      );
+
+      const vector = await Promise.race([embedPromise, timeoutPromise]);
+      return { chunkId: chunk.id, vector };
+
     } catch (error) {
-      addLog('error', `Échec embedding chunk ${chunks[i].id}: ${error.message}`);
+      if (retryCount < maxRetries) {
+        addLog('warning', `Retry ${retryCount + 1}/${maxRetries} pour chunk ${chunk.id}`);
+        // Attendre un peu avant retry
+        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+        return embedWithRetry(chunk, retryCount + 1);
+      } else {
+        addLog('error', `Échec définitif embedding chunk ${chunk.id}: ${error.message}`);
+        return null; // Échec définitif
+      }
     }
+  };
+
+  // Traiter par batches
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += batchSize) {
+    // Vérifier annulation avant chaque batch
+    if (shouldCancel()) {
+      addLog('warning', 'Processus d\'embedding annulé par utilisateur');
+      break;
+    }
+
+    const batchEnd = Math.min(batchStart + batchSize, chunks.length);
+    const batch = chunks.slice(batchStart, batchEnd);
+
+    addLog('info', `Traitement batch ${Math.floor(batchStart/batchSize) + 1}: chunks ${batchStart + 1}-${batchEnd}/${chunks.length}`);
+
+    try {
+      // Traiter le batch en parallèle avec gestion d'erreur robuste
+      const batchPromises = batch.map(chunk => embedWithRetry(chunk));
+      const batchResults = await Promise.allSettled(batchPromises);
+
+      // Traiter les résultats (succès et échecs)
+      batchResults.forEach((result, index) => {
+        const chunk = batch[index];
+        if (result.status === 'fulfilled' && result.value) {
+          results.push(result.value);
+        } else {
+          failedChunks.push(chunk);
+          if (result.status === 'rejected') {
+            addLog('error', `Chunk ${chunk.id} failed: ${result.reason?.message || 'Unknown error'}`);
+          }
+        }
+      });
+
+
+      // Petite pause entre batches pour éviter surcharge
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+    } catch (batchError) {
+      addLog('error', `Erreur batch ${Math.floor(batchStart/batchSize) + 1}: ${batchError.message}`);
+      // Continuer avec le batch suivant malgré l'erreur
+    }
+
+    // Mise à jour progression
+    onProgress(results.length + failedChunks.length, chunks.length);
   }
 
+  addLog('success', `Embeddings générés: ${results.length} réussis, ${failedChunks.length} échoués`);
+
+  // Retourner seulement les réussis, les échecs seront retraités plus tard si nécessaire
   return results;
 }
 

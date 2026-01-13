@@ -25,4 +25,3 @@ export function clearValidationCache() {
 export function getAllValidationStatuses() {
   return {};
 }
-

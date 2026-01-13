@@ -10,6 +10,8 @@ import { loadModel, streamCompletion, isModelLoaded, getCurrentEngine } from '..
 import { TTSManager } from '../audio/ttsWebSpeech';
 import { STTManager, isSTTSupported } from '../audio/sttWebSpeech';
 import { getSystemPrompt, VERBOSITY } from '../prompts/systemPrompt';
+import { searchSimilarChunks, buildRAGContext } from '../rag/search';
+import { state } from '../state/state';
 
 export function useConversation() {
   const [state, setState] = useState<ConversationState>(ConversationState.IDLE);
@@ -99,9 +101,31 @@ export function useConversation() {
     stateMachineRef.current.transition(ConversationState.THINKING);
     setCurrentText('');
 
+    // === RAG RETRIEVAL ===
+    let ragContext = '';
+    if (state.vectorStore && state.vectorStore.length > 0) {
+      try {
+        setStatusText('Recherche de sources pertinentes...');
+        const relevantChunks = await searchSimilarChunks(userMessage, 5);
+        if (relevantChunks && relevantChunks.length > 0) {
+          ragContext = buildRAGContext(relevantChunks);
+          setStatusText(`Trouvé ${relevantChunks.length} source(s) pertinente(s)`);
+        }
+      } catch (error) {
+        console.error('[RAG] Retrieval failed:', error);
+        // Continue sans RAG si échec
+      }
+    }
+
     const engine = getCurrentEngine();
     const currentSettings = conversationStore.getSettings();
-    const systemPrompt = getSystemPrompt(userMessage, currentSettings.verbosity as VERBOSITY);
+    
+    // Construire le system prompt avec contexte RAG si disponible
+    const baseSystemPrompt = getSystemPrompt(userMessage, currentSettings.verbosity as VERBOSITY);
+    const systemPrompt = ragContext 
+      ? `${baseSystemPrompt}\n\n### Contexte Récupéré (RAG):\n${ragContext}\n\nBASE TA RÉPONSE SUR LE CONTEXTE CI-DESSUS. Cite les sources comme [DocX • pY] si possible.`
+      : baseSystemPrompt;
+    
     const history = conversationStore.getMessages()
       .filter(m => m.role !== 'system')
       .slice(-10)

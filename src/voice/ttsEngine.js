@@ -14,4 +14,3 @@ export async function speak(text, modelId, voiceId, options) {
 export function isModelReady(modelId) {
   return false;
 }
-

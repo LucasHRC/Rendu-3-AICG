@@ -4,17 +4,55 @@
  */
 
 import { validatePDF, generateFileId, checkDuplicate } from '../utils/fileUtils.js';
+import {
+  initIndexedDB,
+  saveDocument as saveDocToDB,
+  saveChunk as saveChunkToDB,
+  saveChunks as saveChunksToDB,
+  saveEmbedding as saveEmbeddingToDB,
+  saveManifest as saveManifestToDB,
+  getAllDocuments as loadDocsFromDB,
+  getAllChunks as loadChunksFromDB,
+  getAllEmbeddings as loadEmbeddingsFromDB
+} from '../storage/indexedDB.js';
 
 export const state = {
-  // Documents uploadés
+  // Documents uploadés (ancien format)
   docs: [],
-  
-  // Chunks de texte extraits
+
+  // Chunks de texte extraits (ancien format)
   chunks: [],
-  
+
   // Vector Store : chunks avec embeddings
   vectorStore: [],
-  
+
+  // NOUVELLES STRUCTURES POUR REVUE LITTÉRAIRE RAG
+  // Map des documents avec statuts détaillés
+  documents: new Map(),
+
+  // Reviews par document (JSON structuré)
+  reviewsByDoc: new Map(),
+
+  // Revue finale assemblée
+  litReviewFinal: null,
+
+  // Historique des revues en memoire (perdu au rechargement)
+  reviewHistory: [],
+
+  // Etat UI pour la revue
+  ui: {
+    isReviewRunning: false,
+    progress: {
+      totalDocs: 0,
+      doneDocs: 0,
+      currentDocId: null,
+      step: null // 'init', 'analyzing', 'assembling', 'complete'
+    },
+    controls: {
+      temperature: 0.0 // Pour JSON strict
+    }
+  },
+
   // Historique de conversation
   chatHistory: [],
   
@@ -45,6 +83,15 @@ export const state = {
 
   // Mode importé (désactive upload quand base importée)
   importedMode: false,
+
+  // État de génération d'embeddings
+  embeddingGeneration: {
+    inProgress: false,
+    isAutomatic: false, // true si généré automatiquement via QuickUpload
+    cancellable: true,
+    currentProgress: 0,
+    totalProgress: 0
+  },
 
   // Logs pour le panel de logs
   logs: []
@@ -147,7 +194,24 @@ export function addDocument(file) {
     status: 'uploaded',
     extractedText: null,
     pageCount: null,
-    charCount: null
+    charCount: null,
+    // Métadonnées structurées (6 paramètres fixes)
+    metadata: {
+      summary: null,              // 1-2 phrases max
+      subject: null,              // Phrase descriptive
+      type: null,                 // Type de document
+      context: {                  // Documents liés
+        primary: [],              // Contexte principal (IDs de documents)
+        secondary: []            // Contextes secondaires
+      },
+      utility: null,              // Utilité + contenu combinés
+      importance: 'moyenne',      // 'faible' | 'moyenne' | 'élevée'
+      // Métadonnées techniques
+      generatedBy: null,          // 'ai' | 'user' | 'hybrid'
+      generatedAt: null,
+      lastModified: new Date(),
+      confidenceScore: null       // Score de confiance IA (optionnel)
+    }
   };
 
   // Ajout au state
@@ -179,6 +243,9 @@ export function removeDocument(id) {
   }
 
   const doc = state.docs[index];
+  
+  // Supprimer les liens avec les autres documents
+  removeDocumentLinks(id);
   
   // Supprimer les embeddings associés
   removeEmbeddingsByDocId(id);
@@ -244,9 +311,9 @@ export function updateDocumentStatus(id, status, error = null) {
  * @param {object} extractionData - Données d'extraction {text, pageCount, charCount}
  * @returns {boolean} - true si mis à jour, false si non trouvé
  */
-export function updateDocumentExtraction(id, extractionData) {
+export async function updateDocumentExtraction(id, extractionData) {
   const doc = getDocument(id);
-  
+
   if (!doc) {
     addLog('warning', `Document not found for extraction update: ${id}`);
     return false;
@@ -257,20 +324,40 @@ export function updateDocumentExtraction(id, extractionData) {
   doc.charCount = extractionData.charCount;
   doc.status = 'extracted';
 
+  // Initialiser metadata si pas encore fait
+  if (!doc.metadata) {
+    doc.metadata = {
+      resume_court: null,
+      sujets: [],
+      type_document: null,
+      contexte_projet: [],
+      utilite_principale: null,
+      importance_relative: 'moyenne',
+      generatedBy: null,
+      generatedAt: null,
+      lastModified: new Date(),
+      confidenceScore: null
+    };
+  }
+
+  // Sauvegarder dans IndexedDB
+  await initIndexedDB();
+  await saveDocToDB(doc);
+
   // Émission d'événement pour notifier l'UI
-  window.dispatchEvent(new CustomEvent('state:docExtracted', { 
-    detail: { 
-      id, 
-      pageCount: extractionData.pageCount, 
-      charCount: extractionData.charCount 
-    } 
+  window.dispatchEvent(new CustomEvent('state:docExtracted', {
+    detail: {
+      id,
+      pageCount: extractionData.pageCount,
+      charCount: extractionData.charCount
+    }
   }));
 
   // Log
-  addLog('success', `Text extracted from ${doc.filename}: ${extractionData.pageCount} pages, ${extractionData.charCount} chars`, { 
-    id, 
-    pageCount: extractionData.pageCount, 
-    charCount: extractionData.charCount 
+  addLog('success', `Text extracted from ${doc.filename}: ${extractionData.pageCount} pages, ${extractionData.charCount} chars`, {
+    id,
+    pageCount: extractionData.pageCount,
+    charCount: extractionData.charCount
   });
 
   return true;
@@ -281,22 +368,26 @@ export function updateDocumentExtraction(id, extractionData) {
  * @param {Array} chunks - Liste des chunks à ajouter
  * @returns {boolean} - true si ajouté avec succès
  */
-export function addChunks(chunks) {
+export async function addChunks(chunks) {
   if (!Array.isArray(chunks) || chunks.length === 0) {
     return false;
   }
 
   state.chunks.push(...chunks);
 
+  // Sauvegarder dans IndexedDB
+  await initIndexedDB();
+  await saveChunksToDB(chunks);
+
   // Émission d'événement pour notifier l'UI
-  window.dispatchEvent(new CustomEvent('state:chunksAdded', { 
-    detail: { count: chunks.length, source: chunks[0]?.source } 
+  window.dispatchEvent(new CustomEvent('state:chunksAdded', {
+    detail: { count: chunks.length, source: chunks[0]?.source }
   }));
 
   // Log
-  addLog('success', `${chunks.length} chunks créés pour ${chunks[0]?.source}`, { 
+  addLog('success', `${chunks.length} chunks créés pour ${chunks[0]?.source}`, {
     count: chunks.length,
-    source: chunks[0]?.source 
+    source: chunks[0]?.source
   });
 
   return true;
@@ -367,7 +458,7 @@ export function getChunksStats() {
  * @param {Float32Array} vector - Le vecteur d'embedding
  * @returns {boolean} - true si ajouté avec succès
  */
-export function addEmbedding(chunkId, vector) {
+export async function addEmbedding(chunkId, vector) {
   // Vérifier que le chunk existe
   const chunk = state.chunks.find(c => c.id === chunkId);
   if (!chunk) {
@@ -393,9 +484,13 @@ export function addEmbedding(chunkId, vector) {
     state.vectorStore.push(entry);
   }
 
+  // Sauvegarder dans IndexedDB
+  await initIndexedDB();
+  await saveEmbeddingToDB(entry);
+
   // Émission d'événement
-  window.dispatchEvent(new CustomEvent('state:embeddingAdded', { 
-    detail: { chunkId, vectorSize: vector.length } 
+  window.dispatchEvent(new CustomEvent('state:embeddingAdded', {
+    detail: { chunkId, vectorSize: vector.length }
   }));
 
   return true;
@@ -479,6 +574,270 @@ export function addChatMessage(message) {
   return messageWithId;
 }
 
+// ============================================
+// Fonctions Metadata (6 paramètres fixes)
+// ============================================
+
+/**
+ * Met à jour les métadonnées d'un document
+ * @param {string} id - L'ID du document
+ * @param {object} metadata - Objet de métadonnées (partiel ou complet)
+ * @param {string} generatedBy - 'ai' | 'user' | 'hybrid'
+ * @returns {boolean} - true si mis à jour, false si non trouvé
+ */
+export function updateDocumentMetadata(id, metadata, generatedBy = 'user') {
+  const doc = getDocument(id);
+  
+  if (!doc) {
+    addLog('warning', `Document not found for metadata update: ${id}`);
+    return false;
+  }
+
+  // Initialiser metadata si nécessaire
+  if (!doc.metadata) {
+    doc.metadata = {
+      summary: null,
+      subject: null,
+      type: null,
+      context: { primary: [], secondary: [] },
+      utility: null,
+      importance: 'moyenne',
+      generatedBy: null,
+      generatedAt: null,
+      lastModified: new Date(),
+      confidenceScore: null
+    };
+  }
+
+  // Mettre à jour les champs fournis
+  if (metadata.summary !== undefined) doc.metadata.summary = metadata.summary;
+  if (metadata.subject !== undefined) doc.metadata.subject = metadata.subject;
+  if (metadata.type !== undefined) doc.metadata.type = metadata.type;
+  if (metadata.context !== undefined) {
+    if (metadata.context.primary !== undefined) doc.metadata.context.primary = metadata.context.primary;
+    if (metadata.context.secondary !== undefined) doc.metadata.context.secondary = metadata.context.secondary;
+  }
+  if (metadata.utility !== undefined) doc.metadata.utility = metadata.utility;
+  if (metadata.importance !== undefined) doc.metadata.importance = metadata.importance;
+  if (metadata.confidenceScore !== undefined) doc.metadata.confidenceScore = metadata.confidenceScore;
+
+  // Mettre à jour les métadonnées techniques
+  doc.metadata.generatedBy = generatedBy;
+  doc.metadata.lastModified = new Date();
+  if (generatedBy === 'ai' && !doc.metadata.generatedAt) {
+    doc.metadata.generatedAt = new Date();
+  }
+
+  // Émission d'événement
+  window.dispatchEvent(new CustomEvent('state:docMetadataUpdated', { 
+    detail: { id, metadata: doc.metadata } 
+  }));
+
+  // Log
+  addLog('info', `Metadata updated for ${doc.filename}`, { id, generatedBy });
+
+  return true;
+}
+
+/**
+ * Récupère les métadonnées d'un document
+ * @param {string} id - L'ID du document
+ * @returns {object|null} - Les métadonnées ou null si non trouvé
+ */
+export function getDocumentMetadata(id) {
+  const doc = getDocument(id);
+  return doc ? doc.metadata : null;
+}
+
+/**
+ * Ajoute un lien entre deux documents (bidirectionnel)
+ * @param {string} docId1 - ID du premier document
+ * @param {string} docId2 - ID du deuxième document
+ * @param {boolean} isPrimary - true pour contexte principal, false pour secondaire
+ * @returns {boolean} - true si ajouté, false si erreur
+ */
+export async function linkDocuments(docId1, docId2, isPrimary = true) {
+  const doc1 = getDocument(docId1);
+  const doc2 = getDocument(docId2);
+
+  if (!doc1 || !doc2) {
+    addLog('warning', `Cannot link documents: one or both not found`, { docId1, docId2 });
+    return false;
+  }
+
+  // Initialiser metadata si nécessaire
+  if (!doc1.metadata) await updateDocumentMetadata(doc1.id, {}, 'user');
+  if (!doc2.metadata) await updateDocumentMetadata(doc2.id, {}, 'user');
+
+  const contextArray1 = isPrimary ? doc1.metadata.context.primary : doc1.metadata.context.secondary;
+  const contextArray2 = isPrimary ? doc2.metadata.context.primary : doc2.metadata.context.secondary;
+
+  // Ajouter bidirectionnellement
+  if (!contextArray1.includes(docId2)) contextArray1.push(docId2);
+  if (!contextArray2.includes(docId1)) contextArray2.push(docId1);
+
+  doc1.metadata.lastModified = new Date();
+  doc2.metadata.lastModified = new Date();
+
+  // Émission d'événement
+  window.dispatchEvent(new CustomEvent('state:docLinked', {
+    detail: { docId1, docId2, isPrimary }
+  }));
+
+  addLog('info', `Documents linked: ${doc1.filename} ↔ ${doc2.filename}`, { docId1, docId2, isPrimary });
+
+  return true;
+}
+
+/**
+ * Supprime un lien entre deux documents (bidirectionnel)
+ * @param {string} docId1 - ID du premier document
+ * @param {string} docId2 - ID du deuxième document
+ * @returns {boolean} - true si supprimé, false si erreur
+ */
+export function unlinkDocuments(docId1, docId2) {
+  const doc1 = getDocument(docId1);
+  const doc2 = getDocument(docId2);
+
+  if (!doc1 || !doc2 || !doc1.metadata || !doc2.metadata) {
+    return false;
+  }
+
+  // Supprimer des deux contextes (primary et secondary)
+  const removeFromArray = (arr, id) => {
+    const index = arr.indexOf(id);
+    if (index > -1) arr.splice(index, 1);
+  };
+
+  removeFromArray(doc1.metadata.context.primary, docId2);
+  removeFromArray(doc1.metadata.context.secondary, docId2);
+  removeFromArray(doc2.metadata.context.primary, docId1);
+  removeFromArray(doc2.metadata.context.secondary, docId1);
+
+  doc1.metadata.lastModified = new Date();
+  doc2.metadata.lastModified = new Date();
+
+  // Émission d'événement
+  window.dispatchEvent(new CustomEvent('state:docUnlinked', { 
+    detail: { docId1, docId2 } 
+  }));
+
+  addLog('info', `Documents unlinked: ${doc1.filename} ↔ ${doc2.filename}`, { docId1, docId2 });
+
+  return true;
+}
+
+/**
+ * Supprime tous les liens d'un document (lors de sa suppression)
+ * @param {string} docId - L'ID du document supprimé
+ */
+function removeDocumentLinks(docId) {
+  state.docs.forEach(doc => {
+    if (doc.metadata) {
+      const removeFromArray = (arr, id) => {
+        const index = arr.indexOf(id);
+        if (index > -1) arr.splice(index, 1);
+      };
+      removeFromArray(doc.metadata.context.primary, docId);
+      removeFromArray(doc.metadata.context.secondary, docId);
+    }
+  });
+}
+
+// ============================================
+// Chargement depuis IndexedDB
+// ============================================
+
+/**
+ * Charge tous les documents depuis IndexedDB
+ * @returns {Promise<boolean>}
+ */
+export async function loadAllFromIndexedDB() {
+  try {
+    await initIndexedDB();
+
+    // Charger documents
+    const docs = await loadDocsFromDB();
+    state.docs = docs;
+
+    // Charger chunks
+    const chunks = await loadChunksFromDB();
+    state.chunks = chunks;
+
+    // Charger embeddings
+    const embeddings = await loadEmbeddingsFromDB();
+    state.vectorStore = embeddings;
+
+    // Charger métadonnées et manifests pour chaque document
+    const { getMetadata, getManifest } = await import('../storage/indexedDB.js');
+    for (const doc of docs) {
+      const metadata = await getMetadata(doc.id);
+      if (metadata) {
+        if (!doc.metadata) {
+          doc.metadata = {
+            resume_court: null,
+            sujets: [],
+            type_document: null,
+            contexte_projet: [],
+            utilite_principale: null,
+            importance_relative: 'moyenne',
+            generatedBy: null,
+            generatedAt: null,
+            lastModified: new Date(),
+            confidenceScore: null
+          };
+        }
+        doc.metadata.resume_court = metadata.resume_court;
+        doc.metadata.sujets = metadata.sujets;
+        doc.metadata.type_document = metadata.type_document;
+        doc.metadata.contexte_projet = metadata.contexte_projet;
+        doc.metadata.utilite_principale = metadata.utilite_principale;
+        doc.metadata.importance_relative = metadata.importance_relative;
+        doc.metadata.generatedBy = metadata.generatedBy;
+        doc.metadata.generatedAt = metadata.generatedAt;
+        doc.metadata.lastModified = metadata.lastModified;
+        doc.metadata.confidenceScore = metadata.confidenceScore;
+      }
+
+      // Charger le manifest pour récupérer les métadonnées complètes
+      const manifest = await getManifest(doc.id);
+      if (manifest) {
+        if (!doc.metadata) {
+          doc.metadata = {
+            resume_court: null,
+            sujets: [],
+            type_document: null,
+            contexte_projet: [],
+            utilite_principale: null,
+            importance_relative: 'moyenne',
+            generatedBy: null,
+            generatedAt: null,
+            lastModified: new Date(),
+            confidenceScore: null
+          };
+        }
+        doc.metadata.resume_court = manifest.resume_court;
+        doc.metadata.sujets = manifest.sujets;
+        doc.metadata.type_document = manifest.type_document;
+        doc.metadata.contexte_projet = manifest.contexte_projet;
+        doc.metadata.utilite_principale = manifest.utilite_principale;
+        doc.metadata.importance_relative = manifest.importance_relative;
+      }
+    }
+
+    addLog('success', `Données chargées depuis IndexedDB: ${docs.length} docs, ${chunks.length} chunks, ${embeddings.length} embeddings`);
+    return true;
+  } catch (error) {
+    addLog('error', `Erreur chargement IndexedDB: ${error.message}`);
+    return false;
+  }
+}
+
 // Initialisation
 addLog('info', 'Application initialized');
+
+// Initialiser IndexedDB au démarrage
+initIndexedDB().catch(err => {
+  addLog('error', `Échec initialisation IndexedDB: ${err.message}`);
+});
 

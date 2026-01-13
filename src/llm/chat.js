@@ -5,6 +5,8 @@
 import { state, addLog } from '../state/state.js';
 import { generateCompletion, isModelReady, getLoadedModel } from './webllm.js';
 import { searchSimilarChunks, searchForSynthesis, buildRAGContext, getAvailableDocuments, groupResultsByDocument } from '../rag/search.js';
+import { recordDocumentUsage } from '../rag/importanceCalculator.js';
+import { buildCompactContext } from '../rag/manifestBuilder.js';
 
 // Historiques séparés pour chaque slot
 const chatHistories = {
@@ -98,16 +100,14 @@ export function clearChatHistory(slot = 'primary') {
 }
 
 /**
- * Construit les messages avec contexte RAG structuré
+ * Construit les messages avec contexte RAG structuré en 2 blocs
  */
 function buildMessages(systemPrompt, ragResults, userQuestion, isSynthesis = false, slot = 'primary') {
   const messages = [];
 
-  // System message
-  messages.push({
-    role: 'system',
-    content: systemPrompt
-  });
+  // Construire le contexte avec MANIFEST + RETRIEVED CHUNKS
+  const contextBlocks = buildCompactContext(ragResults);
+  const enhancedSystemPrompt = `${systemPrompt}\n\n---\n\n${contextBlocks}\n\n---\n\nUtilise le MANIFEST pour comprendre la base de documents et les RETRIEVED CHUNKS comme preuves pour répondre.`;
 
   // Historique récent
   const recentHistory = chatHistories[slot].slice(-6);
@@ -194,6 +194,19 @@ export async function sendMessage(userMessage, options = {}, onToken = () => {},
       } else {
         ragResults = await searchSimilarChunks(userMessage, topN);
         addLog('info', `RAG: ${ragResults.length} chunks`);
+      }
+
+      // Enregistrer l'utilisation des documents pour le calcul d'importance
+      if (ragResults && ragResults.length > 0) {
+        const usedDocIds = new Set();
+        ragResults.forEach(result => {
+          if (result.docId) {
+            usedDocIds.add(result.docId);
+          }
+        });
+        usedDocIds.forEach(docId => {
+          recordDocumentUsage(docId);
+        });
       }
     } catch (error) {
       addLog('warning', `RAG failed: ${error.message}`);

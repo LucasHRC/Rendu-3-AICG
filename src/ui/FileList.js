@@ -8,6 +8,8 @@ import { showPDFViewer } from './PDFViewer.js';
 import { extractTextFromPDF } from '../rag/pdfExtract.js';
 import { createChunksForDocument } from '../rag/chunker.js';
 import { generateNameSuggestions } from '../utils/namingSuggestions.js';
+import { autoGenerateMetadata } from '../rag/documentMetadata.js';
+import { autoDetectLinks } from '../rag/documentLinker.js';
 
 /**
  * Crée le composant de liste des fichiers
@@ -341,8 +343,18 @@ async function handleExtraction(docId) {
   renderFileList();
 
   try {
-    const extractionData = await extractTextFromPDF(doc.file);
+    const extractionData = await extractTextFromPDF(doc.file, (current, total) => {
+      // Mise à jour du statut avec progression
+      updateDocumentStatus(docId, `extracting (${current}/${total})`);
+      renderFileList();
+    });
     updateDocumentExtraction(docId, extractionData);
+
+    // Générer automatiquement les métadonnées après extraction
+    await autoGenerateMetadata(docId);
+
+    // Détecter automatiquement les liens avec les autres documents
+    await autoDetectLinks(docId);
 
     const sourceName = doc.displayName || doc.filename;
     const chunks = createChunksForDocument(

@@ -23,4 +23,3 @@ export function getRecommendedModels() {
 export function updateModelStatus(modelId, available, error = null) {
   // No-op
 }
-

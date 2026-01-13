@@ -7,28 +7,14 @@ import { initWebLLM, isModelReady, isModelLoading, getLoadedModel, isDualMode, M
 import { getChatHistory, sendMessage, clearChatHistory } from '../llm/chat.js';
 import { parseMarkdown } from '../utils/markdown.js';
 import { showChunkViewer } from './ChunkViewer.js';
-import { setHubContext } from '../agents/HubAgent.js';
-import { showLoadingOverlay, updateLoadingProgress, hideLoadingOverlay } from './LoadingOverlay.js';
+// Agents supprimés - remplacés par Revue RAG unifiée
 import { isSTTSupported, createSpeechRecognition } from '../voice/speechRecognition.js';
+import { showRAGReviewModal } from './RAGReviewModal.js';
+import { createProgressIndicator, updateProgressIndicator, removeProgressIndicator } from './ProgressIndicator.js';
 
 let dualModeEnabled = false;
-let currentView = 'chat'; // 'chat' ou 'agent'
-let currentAgentData = null;
 
-// Icônes SVG pour les agents
-const AGENT_ICONS = {
-  hub: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>`,
-  atlas: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>`,
-  timeline: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
-  scrolly: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`
-};
-
-const AGENT_NAMES = {
-  hub: 'Exploration Hub',
-  atlas: 'Concept Atlas',
-  timeline: 'Timeline',
-  scrolly: 'Narrative'
-};
+// Agents supprimés - remplacés par Revue RAG unifiée
 
 
 /**
@@ -72,58 +58,14 @@ export function createChatPanel() {
       ${createChatColumn('primary')}
     </div>
 
-    <!-- Agent Visualization Area (hidden by default) -->
-    <div id="agent-view" class="hidden flex-1 flex flex-col min-h-0 overflow-hidden">
-      <div id="agent-header" class="flex-shrink-0 px-4 py-2 bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200">
-        <div class="flex items-center gap-2">
-          <span id="agent-icon" class="text-gray-600"></span>
-          <span id="agent-title" class="text-sm font-semibold text-gray-800"></span>
-          <span id="agent-status" class="text-xs text-gray-500 ml-auto"></span>
-        </div>
-      </div>
-      <div id="agent-content" class="flex-1 overflow-auto p-4"></div>
-    </div>
+    <!-- Revue RAG Area (sera ajoutée plus tard) -->
 
-    <!-- Agent Mode Selector with Context Panel -->
-    <div class="flex-shrink-0 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100">
-      <!-- Context Input (for Hub agent) -->
-      <div id="hub-context-panel" class="hidden p-3 border-b border-gray-200 bg-white">
-        <p class="text-xs font-medium text-gray-600 mb-2">Contexte d'analyse (optionnel)</p>
-        <textarea id="hub-context-input" 
-                  class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" 
-                  rows="2" 
-                  placeholder="Décrivez l'objectif de votre analyse, les angles à privilégier ou les questions spécifiques..."></textarea>
-      </div>
-      <!-- Context Input (for Atlas agent) -->
-      <div id="atlas-context-panel" class="hidden p-3 border-b border-gray-200 bg-white">
-        <p class="text-xs font-medium text-gray-600 mb-2">Contexte du graphe (optionnel)</p>
-        <textarea id="atlas-context-input" 
-                  class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" 
-                  rows="2" 
-                  placeholder="Précisez le domaine d'étude, les concepts clés à privilégier ou les relations à explorer..."></textarea>
-      </div>
-      
-      <div class="p-3">
-        <p class="text-xs font-medium text-gray-500 mb-2">Agents (min. 3B)</p>
-        <div id="agent-mode-selector" class="grid grid-cols-4 gap-2">
-          <button data-agent="hub" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.hub}</span>
-            <span class="text-xs font-medium text-gray-600">Hub</span>
-          </button>
-          <button data-agent="atlas" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.atlas}</span>
-            <span class="text-xs font-medium text-gray-600">Atlas</span>
-          </button>
-          <button data-agent="timeline" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.timeline}</span>
-            <span class="text-xs font-medium text-gray-600">Timeline</span>
-          </button>
-          <button data-agent="scrolly" class="agent-mode-btn group p-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1" disabled>
-            <span class="text-gray-500 group-hover:text-gray-700">${AGENT_ICONS.scrolly}</span>
-            <span class="text-xs font-medium text-gray-600">Narrative</span>
-          </button>
-        </div>
-      </div>
+    <!-- Revue RAG Button -->
+    <div class="flex-shrink-0 border-t border-gray-100 bg-gradient-to-r from-gray-50 to-gray-100 px-3 py-2">
+      <button id="rag-review-btn" class="w-full px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium flex items-center justify-center gap-2">
+        <span>RAG</span>
+        <span>Revue Littéraire</span>
+      </button>
     </div>
 
     <!-- Shared input -->
@@ -205,7 +147,7 @@ function createChatColumn(slot) {
                       <div class="flex items-center gap-2">
                         ${m.recommended ? '<span class="text-yellow-500">★</span>' : ''}
                         <span class="text-sm font-semibold text-gray-800">${m.name}</span>
-                        ${m.agentCompatible ? '<span class="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">🤖 Agents</span>' : ''}
+                        ${m.agentCompatible ? '<span class="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded"> Agents</span>' : ''}
                       </div>
                       <div class="flex items-center gap-2">
                         <span class="text-lg font-bold" style="color: ${scoreColor}">${score.toFixed(1)}</span>
@@ -215,7 +157,7 @@ function createChatColumn(slot) {
                     <!-- Infos: Taille + Params -->
                     <div class="flex items-center gap-3 mb-2 text-xs text-gray-500">
                       <span>📦 ${m.size} GB</span>
-                      <span>⚙️ ${m.params}</span>
+                      <span>${m.params}</span>
                     </div>
                     <!-- Barre globale -->
                     <div class="w-full h-2 bg-gray-200 rounded-full overflow-hidden mb-2">
@@ -258,12 +200,6 @@ function createChatColumn(slot) {
             Charger
           </button>
         </div>
-        <div id="model-progress-${slot}" class="hidden mt-2">
-          <div class="w-full bg-gray-200 rounded-full h-1.5">
-            <div id="progress-bar-${slot}" class="bg-gray-600 h-1.5 rounded-full transition-all" style="width: 0%"></div>
-          </div>
-          <p id="progress-text-${slot}" class="text-xs text-gray-500 mt-1 text-center"></p>
-        </div>
       </div>
       
       <!-- Messages -->
@@ -282,43 +218,15 @@ function setupChatEvents(panel) {
   const clearBtn = panel.querySelector('#clear-all-chat-btn');
   const toggleDualBtn = panel.querySelector('#toggle-dual-btn');
   const backBtn = panel.querySelector('#back-to-chat-btn');
-  const agentBtns = panel.querySelectorAll('.agent-mode-btn');
-
   // Back to chat button
   backBtn?.addEventListener('click', () => {
     showChatView();
   });
 
-  // Agent mode buttons
-  agentBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const agentId = btn.dataset.agent;
-      
-      // Pass context if Hub agent
-      if (agentId === 'hub') {
-        const contextInput = document.getElementById('hub-context-input');
-        if (contextInput) {
-          setHubContext(contextInput.value.trim());
-        }
-      }
-      
-      launchAgent(agentId);
-    });
-
-    // Show context panel on hover for Hub and Atlas
-    btn.addEventListener('mouseenter', () => {
-      const agentId = btn.dataset.agent;
-      const hubPanel = document.getElementById('hub-context-panel');
-      const atlasPanel = document.getElementById('atlas-context-panel');
-      
-      if (agentId === 'hub' && hubPanel && !btn.disabled) {
-        hubPanel.classList.remove('hidden');
-        atlasPanel?.classList.add('hidden');
-      } else if (agentId === 'atlas' && atlasPanel && !btn.disabled) {
-        atlasPanel.classList.remove('hidden');
-        hubPanel?.classList.add('hidden');
-      }
-    });
+  // Revue RAG button
+  const ragReviewBtn = panel.querySelector('#rag-review-btn');
+  ragReviewBtn?.addEventListener('click', () => {
+    showRAGReviewModal();
   });
 
   // Toggle dual mode
@@ -514,65 +422,7 @@ function setupChatEvents(panel) {
   });
 }
 
-/**
- * Lance un agent et affiche sa visualisation
- */
-async function launchAgent(agentId) {
-  const mainContent = document.getElementById('main-content-area');
-  const agentView = document.getElementById('agent-view');
-  const backBtn = document.getElementById('back-to-chat-btn');
-  const inputArea = document.getElementById('chat-input-area');
-  const agentIcon = document.getElementById('agent-icon');
-  const agentTitle = document.getElementById('agent-title');
-  const agentStatus = document.getElementById('agent-status');
-  const agentContent = document.getElementById('agent-content');
-
-  // Switch to agent view
-  mainContent?.classList.add('hidden');
-  agentView?.classList.remove('hidden');
-  agentView?.classList.add('flex');
-  backBtn?.classList.remove('hidden');
-  inputArea?.classList.add('hidden');
-
-  // Update header
-  if (agentIcon) agentIcon.innerHTML = AGENT_ICONS[agentId];
-  if (agentTitle) agentTitle.textContent = AGENT_NAMES[agentId];
-  if (agentStatus) agentStatus.textContent = 'Generating...';
-
-  // Show loading overlay
-  showLoadingOverlay(`Generation ${AGENT_NAMES[agentId]}`, `${state.docs.length} documents, ${state.chunks.length} chunks`);
-
-  // Show loading in content
-  if (agentContent) {
-    agentContent.innerHTML = `
-      <div class="flex flex-col items-center justify-center h-full text-gray-400">
-        <img src="./logo-llm-pdf-rag.avif" alt="Logo" class="w-16 h-16 rounded-xl shadow-sm object-cover mb-4 opacity-50" />
-        <p class="text-sm">Generation ${AGENT_NAMES[agentId]}...</p>
-      </div>
-    `;
-  }
-
-  currentView = 'agent';
-
-  // Trigger agent generation
-  window.dispatchEvent(new CustomEvent('viz:generate', {
-    detail: {
-      agent: { id: agentId, name: AGENT_NAMES[agentId] },
-      onProgress: (pct, text) => {
-        if (agentStatus) agentStatus.textContent = text || `${pct}%`;
-        updateLoadingProgress(pct, text || 'Analyse en cours...', `${AGENT_NAMES[agentId]}`);
-      },
-      onComplete: (data) => {
-        hideLoadingOverlay();
-        currentAgentData = { agentId, data, timestamp: new Date() };
-        if (agentStatus) agentStatus.textContent = 'Ready';
-        
-        // Save to history
-        saveAgentToHistory(agentId, data);
-      }
-    }
-  }));
-}
+// Agents supprimés - remplacés par Revue RAG unifiée
 
 /**
  * Affiche la vue chat
@@ -595,56 +445,9 @@ function showChatView() {
 /**
  * Sauvegarde un résultat d'agent dans l'historique
  */
-function saveAgentToHistory(agentId, data) {
-  const entry = {
-    id: `agent-${Date.now()}`,
-    type: 'agent',
-    agentId,
-    agentName: AGENT_NAMES[agentId],
-    timestamp: new Date(),
-    data
-  };
+// Agents supprimés - remplacés par Revue RAG unifiée
 
-  if (!state.agentHistory) {
-    state.agentHistory = [];
-  }
-  state.agentHistory.unshift(entry);
-
-  // Limit to 20 entries
-  if (state.agentHistory.length > 20) {
-    state.agentHistory.pop();
-  }
-
-  window.dispatchEvent(new CustomEvent('agent:saved', { detail: entry }));
-}
-
-/**
- * Affiche un résultat d'agent depuis l'historique
- */
-export function showAgentFromHistory(entry) {
-  const mainContent = document.getElementById('main-content-area');
-  const agentView = document.getElementById('agent-view');
-  const backBtn = document.getElementById('back-to-chat-btn');
-  const inputArea = document.getElementById('chat-input-area');
-  const agentIcon = document.getElementById('agent-icon');
-  const agentTitle = document.getElementById('agent-title');
-  const agentStatus = document.getElementById('agent-status');
-
-  mainContent?.classList.add('hidden');
-  agentView?.classList.remove('hidden');
-  agentView?.classList.add('flex');
-  backBtn?.classList.remove('hidden');
-  inputArea?.classList.add('hidden');
-
-  if (agentIcon) agentIcon.innerHTML = AGENT_ICONS[entry.agentId];
-  if (agentTitle) agentTitle.textContent = entry.agentName;
-  if (agentStatus) agentStatus.textContent = new Date(entry.timestamp).toLocaleTimeString();
-
-  currentView = 'agent';
-
-  // Re-render the visualization
-  window.dispatchEvent(new CustomEvent('viz:restore', { detail: entry }));
-}
+// Agents supprimés - remplacés par Revue RAG unifiée
 
 function setupColumnEvents(slot) {
   const loadBtn = document.getElementById(`load-model-${slot}`);
@@ -687,33 +490,27 @@ function setupColumnEvents(slot) {
     loadBtn.disabled = true;
     loadBtn.textContent = 'Loading...';
     
-    const progress = document.getElementById(`model-progress-${slot}`);
-    const progressBar = document.getElementById(`progress-bar-${slot}`);
-    const progressText = document.getElementById(`progress-text-${slot}`);
-    
-    progress?.classList.remove('hidden');
-    
-    // Afficher overlay
-    showLoadingOverlay('Chargement du modele', model?.name || modelId);
+    const indicatorId = `model-loading-${slot}`;
+    createProgressIndicator(indicatorId, {
+      title: `Chargement ${model.name}`,
+      subtitle: modelId,
+      position: 'bottom-right',
+      persistent: false
+    });
 
     try {
       await initWebLLM(modelId, (pct, text) => {
-        if (progressBar) progressBar.style.width = `${pct}%`;
-        if (progressText) progressText.textContent = text || `${pct}%`;
-        updateLoadingProgress(pct, text || 'Telechargement...', `${model?.size || '?'} GB`);
+        updateProgressIndicator(indicatorId, pct, text || 'Chargement...', '');
       }, slot);
 
-      hideLoadingOverlay();
-      progress?.classList.add('hidden');
+      removeProgressIndicator(indicatorId, true);
       loadBtn.textContent = 'Changer';
       loadBtn.disabled = false;
-      // Ne pas désactiver le select pour permettre de changer de modèle
       updateModelStatus(slot);
       updateInputState();
 
     } catch (error) {
-      hideLoadingOverlay();
-      progress?.classList.add('hidden');
+      removeProgressIndicator(indicatorId, false);
       loadBtn.disabled = false;
       loadBtn.textContent = 'Retry';
       addLog('error', `${slot}: ${error.message}`);
@@ -734,26 +531,15 @@ function updateInputState() {
   const input = document.getElementById('chat-input');
   const sendBtn = document.getElementById('send-btn');
   const dictaphoneBtn = document.getElementById('dictaphone-btn');
-  const agentBtns = document.querySelectorAll('.agent-mode-btn');
-
   const anyReady = isModelReady('primary') || isModelReady('secondary');
 
   if (input) input.disabled = !anyReady;
   if (sendBtn) sendBtn.disabled = !anyReady || !input?.value.trim();
-  
+
   // Activer/désactiver dictaphone selon disponibilité modèle
   if (dictaphoneBtn && isSTTSupported()) {
     dictaphoneBtn.disabled = !anyReady;
   }
-
-  // Vérifier si un modèle 3B+ est chargé via le flag agentCompatible
-  const loadedModelId = getLoadedModel('primary') || getLoadedModel('secondary');
-  const loadedModelData = MODEL_CATALOG.find(m => m.id === loadedModelId);
-  const is3BPlus = loadedModelData?.agentCompatible === true;
-
-  agentBtns.forEach(btn => {
-    btn.disabled = !is3BPlus || state.vectorStore.length === 0;
-  });
 }
 
 function updateModelStatus(slot) {
@@ -788,8 +574,21 @@ function renderMessages(slot = 'primary') {
     return;
   }
 
-  container.innerHTML = history.map(msg => createMessageHTML(msg)).join('');
+  container.innerHTML = history.map((msg, idx) => createMessageHTML(msg, idx)).join('');
   container.scrollTop = container.scrollHeight;
+  
+  // Attacher les event listeners pour les boutons "Voir le chunk complet"
+  container.querySelectorAll('.chunk-viewer-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const msgIdx = parseInt(btn.dataset.msgIdx);
+      const sourceIdx = parseInt(btn.dataset.sourceIndex);
+      const msg = history[msgIdx];
+      if (msg && msg.sources && msg.sources[sourceIdx]) {
+        window.showChunkViewer(msg.sources[sourceIdx]);
+      }
+    });
+  });
 }
 
 function createMessageHTML(msg, msgIdx) {
@@ -818,9 +617,9 @@ function createMessageHTML(msg, msgIdx) {
               <button 
                 data-msg-idx="${msgIdx}"
                 data-source-index="${i}"
-                class="chunk-viewer-btn text-xs text-blue-600 hover:text-blue-800 font-medium underline"
+                class="chunk-viewer-btn text-xs text-blue-600 hover:text-blue-800 font-medium underline cursor-pointer"
               >
-                Voir le chunk complet →
+                Voir le chunk complet
               </button>
             </div>
           `).join('')}

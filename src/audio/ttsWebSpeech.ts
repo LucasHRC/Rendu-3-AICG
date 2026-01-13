@@ -197,4 +197,3 @@ export class TTSManager {
     return this.isSpeaking || synth.speaking;
   }
 }
-

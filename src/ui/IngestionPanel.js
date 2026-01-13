@@ -59,26 +59,20 @@ export function createIngestionPanel() {
     </div>
   `;
   
-  // Section Embeddings
+  // Section Embeddings (simplifiée - génération automatique uniquement)
   const embeddingsSection = document.createElement('div');
   embeddingsSection.className = 'px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-green-50 to-emerald-50 flex-shrink-0';
   embeddingsSection.innerHTML = `
-    <div class="flex items-center justify-between mb-2">
-      <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold text-gray-900">Embeddings</span>
-        <span id="embedding-status" class="text-xs text-gray-600">Ready</span>
-      </div>
-      <span id="embedding-count" class="text-xs font-medium text-gray-700 bg-white px-2 py-0.5 rounded">0 / 0</span>
+    <div class="flex items-center gap-2">
+      <span class="text-xs font-semibold text-gray-900">Embeddings</span>
+      <span id="embedding-status" class="text-xs text-gray-600">Ready</span>
     </div>
-    <div id="embedding-progress" class="hidden mb-2">
+    <div id="embedding-progress" class="hidden mt-2">
       <div class="w-full bg-gray-200 rounded-full h-1.5">
         <div id="embedding-progress-bar" class="bg-green-600 h-1.5 rounded-full transition-all" style="width: 0%"></div>
       </div>
       <div id="embedding-progress-text" class="text-xs text-gray-500 mt-1"></div>
     </div>
-    <button id="generate-embeddings-btn" class="w-full px-3 py-2 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-      Generate Embeddings
-    </button>
   `;
   
   // Contenu
@@ -602,92 +596,211 @@ ${ragContext}
 }
 
 function setupEmbeddingsButton() {
-  const btn = document.getElementById('generate-embeddings-btn');
-  if (btn) btn.addEventListener('click', generateAllEmbeddings);
+  // Plus de bouton manuel - génération automatique uniquement
+  // Vérifier l'état au démarrage
+  updateEmbeddingUI();
 }
 
 function updateEmbeddingUI() {
   const statusEl = document.getElementById('embedding-status');
-  const countEl = document.getElementById('embedding-count');
-  const btn = document.getElementById('generate-embeddings-btn');
-  
-  if (!statusEl || !countEl || !btn) return;
-  
+  const progressContainer = document.getElementById('embedding-progress');
+  const progressBar = document.getElementById('embedding-progress-bar');
+  const progressText = document.getElementById('embedding-progress-text');
+
+  if (!statusEl) return;
+
   const total = state.chunks.length;
   const embedded = state.vectorStore.length;
   
-  countEl.textContent = `${embedded} / ${total}`;
-  
+  // Vérifier si génération automatique en cours
+  const isAutoInProgress = state.embeddingGeneration?.inProgress && state.embeddingGeneration?.isAutomatic;
+
   if (total === 0) {
     statusEl.textContent = 'No chunks';
-    btn.disabled = true;
-    btn.textContent = 'Generate Embeddings';
-  } else if (embedded === total) {
+    if (progressContainer) progressContainer.classList.add('hidden');
+  } else if (embedded === total && !isAutoInProgress) {
     statusEl.textContent = 'Complete';
-    btn.disabled = true;
-    btn.textContent = 'All embeddings generated';
+    if (progressContainer) progressContainer.classList.add('hidden');
+  } else if (isAutoInProgress) {
+    // Mode génération automatique en cours
+    statusEl.textContent = 'Génération en cours...';
+    
+    if (progressContainer) {
+      progressContainer.classList.remove('hidden');
+      const current = state.embeddingGeneration.currentProgress || embedded;
+      const totalProgress = state.embeddingGeneration.totalProgress || total;
+      const percent = totalProgress > 0 ? Math.round((current / totalProgress) * 100) : 0;
+      if (progressBar) progressBar.style.width = `${percent}%`;
+      if (progressText) progressText.textContent = `${current}/${totalProgress} embeddings (${percent}%)`;
+    }
   } else {
     statusEl.textContent = 'Ready';
-    btn.disabled = false;
-    btn.textContent = `Generate ${total - embedded} embeddings`;
+    if (progressContainer) progressContainer.classList.add('hidden');
   }
 }
 
+// Ajouter les listeners pour les événements de génération automatique
+window.addEventListener('embedding:stateChanged', () => {
+  updateEmbeddingUI();
+});
+
+window.addEventListener('embedding:progress', (e) => {
+  updateEmbeddingUI();
+  // Mettre à jour la barre de progression si visible
+  const progressContainer = document.getElementById('embedding-progress');
+  const progressBar = document.getElementById('embedding-progress-bar');
+  const progressText = document.getElementById('embedding-progress-text');
+  
+  if (progressContainer && progressBar && progressText && !progressContainer.classList.contains('hidden')) {
+    const { current, total } = e.detail;
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    progressBar.style.width = `${percent}%`;
+    progressText.textContent = `${current}/${total} embeddings (${percent}%)`;
+  }
+});
+
+let embeddingCancellationToken = { cancelled: false };
+let isEmbeddingInProgress = false;
+
+// Export pour permettre l'annulation depuis QuickUpload
+export function cancelEmbeddingProcess() {
+  if (embeddingCancellationToken) {
+    embeddingCancellationToken.cancelled = true;
+    addLog('warning', 'Processus d\'embedding annulé');
+    // Mettre à jour l'état
+    if (state.embeddingGeneration) {
+      state.embeddingGeneration.inProgress = false;
+      window.dispatchEvent(new CustomEvent('embedding:stateChanged', { 
+        detail: state.embeddingGeneration 
+      }));
+    }
+  }
+}
+
+// Rendre le token accessible depuis QuickUpload
+export function getEmbeddingCancellationToken() {
+  return embeddingCancellationToken;
+}
+
 async function generateAllEmbeddings() {
-  const btn = document.getElementById('generate-embeddings-btn');
+  // Fonction conservée pour compatibilité avec MemoryBank.js
+  // Les boutons manuels ont été supprimés (génération automatique uniquement)
   const progressContainer = document.getElementById('embedding-progress');
   const progressBar = document.getElementById('embedding-progress-bar');
   const progressText = document.getElementById('embedding-progress-text');
   const statusEl = document.getElementById('embedding-status');
-  
-  if (!btn) return;
-  
-  btn.disabled = true;
+
+  if (!progressContainer || !progressBar || !progressText || !statusEl) return;
+
+  // Éviter les doubles lancements
+  if (isEmbeddingInProgress) {
+    addLog('warning', 'Processus d\'embedding déjà en cours');
+    return;
+  }
+
+  isEmbeddingInProgress = true;
+
+  // Reset cancellation token
+  embeddingCancellationToken.cancelled = false;
+
   progressContainer.classList.remove('hidden');
-  
+
   try {
     if (!isModelLoaded()) {
       statusEl.textContent = 'Loading model...';
       progressText.textContent = 'Downloading model (~23MB)...';
-      
+
       await initEmbeddingModel((progress) => {
         progressBar.style.width = `${progress}%`;
       });
-      
+
       addLog('success', 'Embedding model loaded');
     }
-    
-    const chunksToEmbed = state.chunks.filter(c => 
+
+    const chunksToEmbed = state.chunks.filter(c =>
       !state.vectorStore.find(v => v.chunkId === c.id)
     );
-    
+
     if (chunksToEmbed.length === 0) {
       progressContainer.classList.add('hidden');
       updateEmbeddingUI();
       return;
     }
-    
+
     statusEl.textContent = 'Generating...';
     progressBar.style.width = '0%';
-    
-    const results = await generateEmbeddingsForChunks(chunksToEmbed, (current, total) => {
-      const pct = Math.round((current / total) * 100);
-      progressBar.style.width = `${pct}%`;
-      progressText.textContent = `${current} / ${total}`;
-    });
-    
+
+    const startTime = Date.now();
+    let processedCount = 0;
+    let successCount = 0;
+
+    const results = await generateEmbeddingsForChunks(
+      chunksToEmbed,
+      (current, total) => {
+        processedCount = current;
+        const pct = Math.round((current / total) * 100);
+        progressBar.style.width = `${pct}%`;
+
+        // Calculer temps restant estimé (plus précis)
+        const elapsed = Date.now() - startTime;
+        
+        if (current > 0) {
+          const avgTimePerChunk = elapsed / current;
+          const remaining = total - current;
+          const etaMs = remaining * avgTimePerChunk;
+          const etaSec = Math.round(etaMs / 1000);
+          const elapsedSec = Math.round(elapsed / 1000);
+
+          let etaText = '';
+          if (etaSec < 60) {
+            etaText = `${etaSec}s restantes`;
+          } else if (etaSec < 3600) {
+            etaText = `${Math.round(etaSec / 60)}min restantes`;
+          } else {
+            etaText = `${Math.round(etaSec / 3600)}h restantes`;
+          }
+
+          progressText.textContent = `Batch ${Math.ceil(current / 3)}: ${current}/${total} chunks (${pct}%) - ${etaText}`;
+        } else {
+          progressText.textContent = `Démarrage... ${current}/${total} chunks`;
+        }
+      },
+      {
+        batchSize: 3, // Petit batch pour stabilité
+        shouldCancel: () => embeddingCancellationToken.cancelled
+      }
+    );
+
+    // Vérifier si annulé
+    if (embeddingCancellationToken.cancelled) {
+      addLog('warning', `Processus annulé - ${results.length} embeddings générés avant annulation`);
+    } else {
+      addLog('success', `${results.length} embeddings générés avec succès`);
+    }
+
+    // Sauvegarder les résultats réussis
     results.forEach(({ chunkId, vector }) => {
       addEmbedding(chunkId, vector);
+      successCount++;
     });
-    
-    addLog('success', `${results.length} embeddings generated`);
-    
+
+    // Log final détaillé
+    const totalTime = Math.round((Date.now() - startTime) / 1000);
+    const failedCount = processedCount - successCount;
+    addLog('info', `Résumé: ${successCount} réussis, ${failedCount} échoués, ${totalTime}s total`);
+
   } catch (error) {
-    addLog('error', `Error: ${error.message}`);
-    statusEl.textContent = 'Error';
+    if (embeddingCancellationToken.cancelled) {
+      addLog('info', 'Processus annulé par utilisateur');
+    } else {
+      addLog('error', `Erreur embedding: ${error.message}`);
+      statusEl.textContent = 'Error';
+    }
   }
-  
+
+  // Cleanup
   progressContainer.classList.add('hidden');
+  isEmbeddingInProgress = false; // Marquer fin du processus
   updateEmbeddingUI();
 }
 

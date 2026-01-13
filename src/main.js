@@ -12,17 +12,10 @@ import { createSystemControls } from './ui/SystemControls.js';
 import { createHistoryPanel } from './ui/HistoryPanel.js';
 import { createHandsFreePanel, toggleHandsFree, isHandsFreeActive, stopTTS } from './ui/HandsFreePanel.js';
 import { showSettingsPanel } from './ui/SettingsPanel.js';
+import { showLibraryModal } from './ui/LibraryModal.js';
 // VisualizationTabs removed - agents now integrated in ChatPanel
 
-// Import des agents pour enregistrer leurs event listeners
-import './agents/HubAgent.js';
-import './agents/AtlasAgent.js';
-import './agents/TimelineAgent.js';
-import './agents/NarrativeAgent.js';
-import './ui/HubDashboard.js';
-import './ui/AtlasDashboard.js';
-import './ui/NarrativeDashboard.js';
-import './utils/exportViz.js';
+// Agents supprimés - remplacés par Revue RAG unifiée
 
 let currentTab = 'documents';
 
@@ -79,8 +72,13 @@ function createMainUI(container) {
         </div>
       </div>
       
-      <!-- Right side: Settings button -->
+      <!-- Right side: Library + Settings buttons -->
       <div class="flex items-center gap-2">
+        <button id="library-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Bibliothèque">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+          </svg>
+        </button>
         <button id="settings-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Paramètres">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -102,6 +100,12 @@ function createMainUI(container) {
           <span class="w-2 h-2 bg-green-500 rounded-full"></span>
           <span class="text-gray-600"><span id="stat-vectors" class="font-semibold text-gray-900">0</span> vectors</span>
         </div>
+      </div>
+
+      <!-- Loading Spinner (simple) -->
+      <div id="model-loading-spinner" class="hidden flex items-center gap-2 ml-4">
+        <div class="w-4 h-4 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin"></div>
+        <span id="model-loading-text" class="text-xs text-gray-600">Chargement...</span>
       </div>
     </div>
   `;
@@ -126,6 +130,11 @@ function createMainUI(container) {
   setInterval(updateHeaderStats, 1000);
   
   // Setup settings button
+  const libraryBtn = document.getElementById('library-btn');
+  libraryBtn?.addEventListener('click', () => {
+    showLibraryModal();
+  });
+
   const settingsBtn = document.getElementById('settings-btn');
   settingsBtn?.addEventListener('click', () => {
     showSettingsPanel();
@@ -375,8 +384,12 @@ function updateHeaderStats() {
   const docsEl = document.getElementById('stat-docs');
   const chunksEl = document.getElementById('stat-chunks');
   const vectorsEl = document.getElementById('stat-vectors');
-  
-  if (docsEl) docsEl.textContent = state.docs.length;
+
+  // Stats selon exigences: total docs importés VS docs retrouvés dans la réponse
+  const totalDocs = state.docs.length;
+  const extractedDocs = state.docs.filter(d => d.status === 'extracted').length;
+
+  if (docsEl) docsEl.textContent = `${extractedDocs}/${totalDocs}`;
   if (chunksEl) chunksEl.textContent = state.chunks.length;
   if (vectorsEl) vectorsEl.textContent = state.vectorStore.length;
 }

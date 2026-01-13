@@ -194,4 +194,3 @@ Pour plus d'informations sur XTTS-v2 :
 - Documentation Coqui TTS : https://github.com/coqui-ai/TTS
 - XTTS-v2 : https://github.com/coqui-ai/TTS/wiki/XTTS-v2
 
-

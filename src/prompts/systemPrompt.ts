@@ -130,4 +130,3 @@ export function getSystemPrompt(
   
   return buildSystemPrompt(defaultVerbosity, hasTriggers);
 }
-

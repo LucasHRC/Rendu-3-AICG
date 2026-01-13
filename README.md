@@ -61,6 +61,38 @@ Le selecteur de modeles affiche 10 modeles tries par score global. Chaque modele
 
 Les modeles compatibles avec les agents (3B+) affichent un badge. Au survol, les 5 criteres detailles apparaissent avec barres de progression colorees.
 
+## Revue Littéraire RAG
+
+Le système de revue littéraire permet de générer automatiquement des revues de littérature scientifique à partir de vos documents PDF.
+
+### Fonctionnalités
+
+- **Analyse par document** : Extraction structurée JSON pour chaque document (métadonnées, question de recherche, méthodologie, résultats, limitations)
+- **Synthèse finale** : Assemblage automatique des analyses en revue complète
+- **Mode adaptatif** : Comparaison si documents liés, sinon mode PORTFOLIO
+- **Retrieval optimisé** : TopK chunks par document avec priorité page 1/abstract/conclusion
+- **Citations traçables** : Références aux sources utilisées
+
+### Utilisation
+
+1. Chargez vos documents PDF dans l'onglet Documents
+2. Attendez l'extraction et l'indexation (chunks + embeddings)
+3. Cliquez sur "Revue Littéraire" dans l'interface
+4. Le système génère automatiquement une revue structurée
+
+### Workflow technique
+
+```
+1. Analyse individuelle (1 appel LLM par document)
+   → Extraction JSON structurée
+   
+2. Synthèse finale (1 appel LLM)
+   → Assembly des fiches JSON
+   → Mode comparaison ou PORTFOLIO
+```
+
+Voir `CHANGELOG.md` pour les détails techniques complets.
+
 ## Mode Hands-Free
 
 Le mode Hands-Free permet une conversation vocale complète avec l'assistant.

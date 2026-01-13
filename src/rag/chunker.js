@@ -22,17 +22,6 @@ function splitIntoSentences(text) {
   return sentences;
 }
 
-/**
- * Découpe un texte en paragraphes
- * @param {string} text - Le texte à découper
- * @returns {Array<string>} - Liste des paragraphes
- */
-function splitIntoParagraphs(text) {
-  return text
-    .split(/\n\s*\n/)
-    .map(p => p.trim())
-    .filter(p => p.length > 0);
-}
 
 /**
  * Découpe intelligemment un texte en chunks sémantiques

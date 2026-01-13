@@ -7,8 +7,8 @@ export default defineConfig(({ mode }) => ({
   base: mode === 'production' ? '/Rendu-3-AICG/' : '/',
   plugins: [react()],
   server: {
-    port: 5173,
-    host: 'localhost'
+    host: 'localhost',
+    strictPort: false
   },
   build: {
     outDir: 'dist',

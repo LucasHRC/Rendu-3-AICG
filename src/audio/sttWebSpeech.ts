@@ -139,4 +139,3 @@ export class STTManager {
     return this.isListening;
   }
 }
-

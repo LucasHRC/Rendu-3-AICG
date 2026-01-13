@@ -1,18 +1,108 @@
 /**
- * Quick Upload - Workflow automatique avec overlay unifié
+ * Quick Upload - Workflow automatique simplifie
  */
 
-import { state as globalState, addDocument, addLog, updateDocumentStatus, updateDocumentExtraction, addChunks, addEmbedding } from '../state/state.js';
+import { state as globalState, addDocument, addLog, updateDocumentStatus, updateDocumentExtraction, addChunks, addEmbedding, state } from '../state/state.js';
 import { validatePDF } from '../utils/fileUtils.js';
 import { extractTextFromPDF } from '../rag/pdfExtract.js';
 import { createChunksForDocument } from '../rag/chunker.js';
 import { generateNameSuggestions } from '../utils/namingSuggestions.js';
 import { initEmbeddingModel, generateEmbeddingsForChunks, isModelLoaded } from '../rag/embeddings.js';
-import { showLoadingOverlay, updateLoadingProgress, hideLoadingOverlay } from './LoadingOverlay.js';
+import { enrichAllDocuments } from '../rag/documentEnricher.js';
+import { isModelReady } from '../llm/webllm.js';
+import { createProgressIndicator, updateProgressIndicator, removeProgressIndicator } from './ProgressIndicator.js';
+import { getEmbeddingCancellationToken } from './IngestionPanel.js';
 
 /**
- * Lance le workflow d'upload rapide avec overlay unifié
- * @param {FileList} files - Les fichiers sélectionnés
+ * Affiche/cache le spinner de chargement
+ */
+function showLoadingSpinner(text = 'Chargement...') {
+  const spinner = document.getElementById('model-loading-spinner');
+  const loadingText = document.getElementById('model-loading-text');
+  if (spinner) {
+    spinner.classList.remove('hidden');
+    if (loadingText) loadingText.textContent = text;
+  }
+}
+
+function hideLoadingSpinner() {
+  const spinner = document.getElementById('model-loading-spinner');
+  if (spinner) spinner.classList.add('hidden');
+}
+
+/**
+ * Affiche un popup proposant l'enrichissement des documents
+ * @returns {Promise<boolean>} - true si l'utilisateur accepte, false sinon
+ */
+function showEnrichmentProposal() {
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-[2000] p-4';
+    
+    modal.innerHTML = `
+      <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900">Enrichir les documents ?</h3>
+            <p class="text-sm text-gray-600">Extraction automatique des métadonnées</p>
+          </div>
+        </div>
+        
+        <p class="text-sm text-gray-700 mb-6">
+          Voulez-vous enrichir automatiquement les documents avec des métadonnées structurées 
+          (titre, auteurs, année, domaine, question de recherche, méthodologie, résultats clés) ?
+          Cela améliorera la qualité de la revue RAG.
+        </p>
+        
+        <div class="flex items-center gap-2 mb-6">
+          <input type="checkbox" id="skip-enrichment-checkbox" class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+          <label for="skip-enrichment-checkbox" class="text-sm text-gray-600 cursor-pointer">
+            Ne plus demander
+          </label>
+        </div>
+        
+        <div class="flex gap-3">
+          <button id="enrichment-yes-btn" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+            Oui, enrichir
+          </button>
+          <button id="enrichment-later-btn" class="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
+            Plus tard
+          </button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const yesBtn = modal.querySelector('#enrichment-yes-btn');
+    const laterBtn = modal.querySelector('#enrichment-later-btn');
+    const skipCheckbox = modal.querySelector('#skip-enrichment-checkbox');
+    
+    const close = (result) => {
+      if (skipCheckbox.checked) {
+        localStorage.setItem('skip-enrichment-prompt', 'true');
+      }
+      modal.remove();
+      resolve(result);
+    };
+    
+    yesBtn.addEventListener('click', () => close(true));
+    laterBtn.addEventListener('click', () => close(false));
+    
+    // Fermer en cliquant en dehors
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) close(false);
+    });
+  });
+}
+
+/**
+ * Lance le workflow d'upload rapide
  */
 export async function showQuickUploadWorkflow(files) {
   const validFiles = Array.from(files).filter(f => validatePDF(f).valid);
@@ -21,9 +111,6 @@ export async function showQuickUploadWorkflow(files) {
     addLog('error', 'Aucun fichier PDF valide');
     return;
   }
-
-  const totalSteps = 4; // Upload, Extract, Chunk, Embed
-  let currentStep = 0;
 
   const state = {
     files: validFiles,
@@ -34,30 +121,22 @@ export async function showQuickUploadWorkflow(files) {
   };
 
   try {
-    // === ETAPE 1: Enregistrement ===
-    currentStep = 1;
-    showLoadingOverlay('Upload Rapide', `${validFiles.length} document(s)`);
-    updateLoadingProgress(5, 'Enregistrement des documents...', 'Etape 1/4');
+    showLoadingSpinner('Enregistrement...');
     
+    // === ETAPE 1: Enregistrement ===
     for (const file of validFiles) {
       const result = addDocument(file);
       if (result.success) {
         state.documents.push(result.doc);
       }
     }
-    
     addLog('info', `${state.documents.length} documents enregistres`);
-    await sleep(300);
 
     // === ETAPE 2: Extraction PDF ===
-    currentStep = 2;
-    updateLoadingProgress(15, 'Extraction du texte...', 'Etape 2/4');
+    showLoadingSpinner('Extraction PDF...');
     
     for (let i = 0; i < state.documents.length; i++) {
       const doc = state.documents[i];
-      const progress = 15 + ((i / state.documents.length) * 25);
-      
-      updateLoadingProgress(progress, `Extraction: ${doc.filename}`, `Document ${i + 1}/${state.documents.length}`);
       updateDocumentStatus(doc.id, 'extracting');
 
       try {
@@ -65,7 +144,6 @@ export async function showQuickUploadWorkflow(files) {
         updateDocumentExtraction(doc.id, extractionData);
         state.extractions.push({ docId: doc.id, ...extractionData });
 
-        // Auto-renommage avec suggestion
         const suggestions = generateNameSuggestions(extractionData.text, doc.filename);
         if (suggestions.length > 0 && suggestions[0] !== doc.displayName) {
           doc.displayName = suggestions[0];
@@ -80,16 +158,12 @@ export async function showQuickUploadWorkflow(files) {
     }
 
     // === ETAPE 3: Chunking ===
-    currentStep = 3;
-    updateLoadingProgress(45, 'Decoupage en chunks...', 'Etape 3/4');
-    
+    showLoadingSpinner('Chunking...');
+
     for (let i = 0; i < state.documents.length; i++) {
       const doc = state.documents[i];
       const extraction = state.extractions.find(e => e.docId === doc.id);
       if (!extraction) continue;
-
-      const progress = 45 + ((i / state.documents.length) * 15);
-      updateLoadingProgress(progress, `Chunking: ${doc.displayName || doc.filename}`, `Document ${i + 1}/${state.documents.length}`);
 
       try {
         const sourceName = doc.displayName || doc.filename;
@@ -110,40 +184,132 @@ export async function showQuickUploadWorkflow(files) {
     }
 
     // === ETAPE 4: Embeddings ===
-    currentStep = 4;
-    updateLoadingProgress(60, 'Generation des embeddings...', 'Etape 4/4');
+    // Obtenir le token d'annulation
+    const embeddingCancellationToken = getEmbeddingCancellationToken();
+    embeddingCancellationToken.cancelled = false;
+    
+    // Marquer la génération comme automatique et en cours IMMÉDIATEMENT
+    // Cela désactive le bouton "Generate embeddings" avant même de commencer
+    state.embeddingGeneration = {
+      inProgress: true,
+      isAutomatic: true,
+      cancellable: true,
+      currentProgress: 0,
+      totalProgress: state.chunks.length
+    };
+    // Émettre l'événement IMMÉDIATEMENT pour désactiver le bouton
+    window.dispatchEvent(new CustomEvent('embedding:stateChanged', { 
+      detail: state.embeddingGeneration 
+    }));
 
-    // Charger le modele si necessaire
+    showLoadingSpinner('Embeddings...');
+
     if (!isModelLoaded()) {
-      updateLoadingProgress(62, 'Chargement modele embeddings...', 'Xenova/all-MiniLM-L6-v2');
-      
-      await initEmbeddingModel((pct) => {
-        const progress = 62 + (pct * 0.15);
-        updateLoadingProgress(progress, 'Chargement modele embeddings...', `${pct}%`);
+      showLoadingSpinner('Chargement modele IA...');
+      await initEmbeddingModel((progress) => {
+        showLoadingSpinner(`Chargement modèle ${progress}%...`);
       });
     }
 
-    // Generer les embeddings
-    updateLoadingProgress(78, 'Generation des vecteurs...', `${state.chunks.length} chunks`);
-    
-    const results = await generateEmbeddingsForChunks(state.chunks, (current, total) => {
-      const progress = 78 + ((current / total) * 20);
-      updateLoadingProgress(progress, `Embedding ${current}/${total}`, state.chunks[current - 1]?.text.substring(0, 40) + '...');
-    });
+    showLoadingSpinner(`Embeddings (${state.chunks.length} chunks)...`);
 
-    // Stocker les embeddings
-    results.forEach(({ chunkId, vector }) => {
-      addEmbedding(chunkId, vector);
-    });
-    state.embeddings = results;
+    try {
+      const results = await generateEmbeddingsForChunks(state.chunks, (current, total) => {
+        showLoadingSpinner(`Embeddings ${current}/${total}...`);
+        
+        // Mettre à jour l'état global
+        state.embeddingGeneration.currentProgress = current;
+        state.embeddingGeneration.totalProgress = total;
+        window.dispatchEvent(new CustomEvent('embedding:progress', { 
+          detail: { current, total } 
+        }));
+        
+        // Vérifier si annulé
+        if (embeddingCancellationToken.cancelled) {
+          throw new Error('Génération annulée par l\'utilisateur');
+        }
+      }, {
+        shouldCancel: () => embeddingCancellationToken.cancelled
+      });
 
-    // === TERMINE ===
-    updateLoadingProgress(100, 'Termine!', `${state.documents.length} docs, ${state.chunks.length} chunks, ${results.length} embeddings`);
-    await sleep(800);
-    
-    hideLoadingOverlay();
-    
-    addLog('success', `Upload rapide termine: ${state.documents.length} documents, ${state.chunks.length} chunks, ${results.length} embeddings`);
+      results.forEach(({ chunkId, vector }) => {
+        if (!embeddingCancellationToken.cancelled) {
+          addEmbedding(chunkId, vector);
+        }
+      });
+      state.embeddings = results;
+
+      hideLoadingSpinner();
+      
+      if (!embeddingCancellationToken.cancelled) {
+        addLog('success', `Upload termine: ${state.documents.length} docs, ${state.chunks.length} chunks, ${results.length} embeddings`);
+      } else {
+        addLog('warning', `Génération annulée - ${results.length} embeddings générés`);
+      }
+    } catch (error) {
+      if (!embeddingCancellationToken.cancelled) {
+        hideLoadingSpinner();
+        addLog('error', `Erreur embeddings: ${error.message}`);
+        throw error;
+      } else {
+        addLog('info', 'Génération annulée par l\'utilisateur');
+        hideLoadingSpinner();
+      }
+    } finally {
+      // Réinitialiser l'état
+      state.embeddingGeneration.inProgress = false;
+      state.embeddingGeneration.isAutomatic = false;
+      window.dispatchEvent(new CustomEvent('embedding:stateChanged', { 
+        detail: state.embeddingGeneration 
+      }));
+      embeddingCancellationToken.cancelled = false;
+    }
+
+    // === ETAPE 5: Proposition d'Enrichissement ===
+    if (isModelReady() && !localStorage.getItem('skip-enrichment-prompt')) {
+      const shouldEnrich = await showEnrichmentProposal();
+      if (shouldEnrich) {
+        try {
+          const indicatorId = 'auto-enrichment';
+          createProgressIndicator(indicatorId, {
+            title: 'Enrichissement automatique',
+            subtitle: 'Extraction des métadonnées...',
+            position: 'bottom-right'
+          });
+
+          await enrichAllDocuments((progress) => {
+            if (progress.status === 'processing' || progress.status === 'extracting' || progress.status === 'rag_summary') {
+              const percent = progress.current && progress.total 
+                ? Math.round((progress.current / progress.total) * 100) 
+                : 0;
+              updateProgressIndicator(
+                indicatorId,
+                percent,
+                progress.filename || progress.message || 'Enrichissement en cours...'
+              );
+            } else if (progress.status === 'complete') {
+              const successCount = progress.results?.filter(r => r.enrichment).length || 0;
+              const totalCount = progress.results?.length || 0;
+              updateProgressIndicator(
+                indicatorId,
+                100,
+                `Terminé: ${successCount}/${totalCount} documents enrichis`
+              );
+              setTimeout(() => {
+                removeProgressIndicator(indicatorId, true);
+              }, 2000);
+            }
+          });
+
+          addLog('success', 'Enrichissement terminé');
+        } catch (error) {
+          addLog('warning', `Enrichissement échoué: ${error.message}`);
+          removeProgressIndicator('auto-enrichment', false);
+        }
+      }
+    } else if (!isModelReady()) {
+      addLog('info', 'Modèle LLM non chargé, enrichissement ignoré');
+    }
 
     // Rafraichir l'UI
     window.dispatchEvent(new CustomEvent('state:docUpdated'));
@@ -152,14 +318,7 @@ export async function showQuickUploadWorkflow(files) {
     window.dispatchEvent(new CustomEvent('embeddings:updated'));
 
   } catch (error) {
-    hideLoadingOverlay();
+    hideLoadingSpinner();
     addLog('error', `Erreur upload rapide: ${error.message}`);
   }
-}
-
-/**
- * Utilitaire sleep
- */
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }

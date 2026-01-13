@@ -13,6 +13,7 @@ import { createHistoryPanel } from './ui/HistoryPanel.js';
 import { createHandsFreePanel, toggleHandsFree, isHandsFreeActive, stopTTS } from './ui/HandsFreePanel.js';
 import { showSettingsPanel } from './ui/SettingsPanel.js';
 import { showLibraryModal } from './ui/LibraryModal.js';
+import { initTutorial } from './ui/Tutorial.js';
 // VisualizationTabs removed - agents now integrated in ChatPanel
 
 // Agents supprimés - remplacés par Revue RAG unifiée
@@ -31,6 +32,11 @@ document.addEventListener('DOMContentLoaded', () => {
   
   createMainUI(app);
   addLog('success', 'UI initialized successfully');
+  
+  // Initialiser le tutoriel après que l'UI soit prête
+  setTimeout(() => {
+    initTutorial();
+  }, 500);
 });
 
 /**
@@ -41,64 +47,66 @@ function createMainUI(container) {
   
   // Header avec onglets
   const header = document.createElement('header');
-  header.className = 'bg-white border-b border-gray-200 px-6 py-3 flex-shrink-0';
+  header.className = 'bg-white border-b border-gray-200 px-3 sm:px-6 py-2 sm:py-3 flex-shrink-0';
   header.innerHTML = `
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-6">
-        <div class="flex items-center gap-3">
-          <img src="./logo-llm-pdf-rag.avif" alt="Logo" class="w-10 h-10 rounded-xl shadow-sm object-cover" />
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
+      <div class="flex items-center gap-3 sm:gap-6 w-full sm:w-auto">
+        <div class="flex items-center gap-2 sm:gap-3">
+          <img src="./logo-llm-pdf-rag.avif" alt="Logo" class="w-8 h-8 sm:w-10 sm:h-10 rounded-xl shadow-sm object-cover" />
           <div>
-            <h1 class="text-lg font-bold text-gray-900">Literature Reviewer</h1>
-            <p class="text-xs text-gray-500">Local AI Research Assistant</p>
+            <h1 class="text-base sm:text-lg font-bold text-gray-900">Literature Reviewer</h1>
+            <p class="text-xs text-gray-500 hidden sm:block">Local AI Research Assistant</p>
           </div>
         </div>
         
         <!-- Onglets principaux -->
-        <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-          <button data-main-tab="documents" class="main-tab px-4 py-2 text-sm font-medium rounded-md bg-white text-gray-900 shadow-sm">
+        <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1 ml-auto sm:ml-0">
+          <button data-main-tab="documents" class="main-tab px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-md bg-white text-gray-900 shadow-sm">
             Documents
           </button>
-          <button data-main-tab="chat" class="main-tab px-4 py-2 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900">
+          <button data-main-tab="chat" class="main-tab px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-md text-gray-600 hover:text-gray-900">
             Chat
           </button>
-          <button data-main-tab="handsfree" class="main-tab px-4 py-2 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900">
-            <span class="flex items-center gap-1.5">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <button data-main-tab="handsfree" class="main-tab px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-md text-gray-600 hover:text-gray-900">
+            <span class="flex items-center gap-1 sm:gap-1.5">
+              <svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
               </svg>
-              Hands-Free
+              <span class="hidden sm:inline">Hands-Free</span>
             </span>
           </button>
         </div>
       </div>
       
-      <!-- Right side: Library + Settings buttons -->
-      <div class="flex items-center gap-2">
-        <button id="library-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Bibliothèque">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-          </svg>
-        </button>
-        <button id="settings-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Paramètres">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-          </svg>
-        </button>
-      </div>
-      
-      <div id="header-stats" class="flex items-center gap-5 text-sm">
-        <div class="flex items-center gap-2">
-          <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
-          <span class="text-gray-600"><span id="stat-docs" class="font-semibold text-gray-900">0</span> docs</span>
+      <!-- Right side: Stats + Library + Settings -->
+      <div class="flex items-center gap-2 sm:gap-2 w-full sm:w-auto justify-between sm:justify-end">
+        <div id="header-stats" class="flex items-center gap-2 sm:gap-5 text-xs sm:text-sm">
+          <div class="flex items-center gap-1 sm:gap-2">
+            <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
+            <span class="text-gray-600"><span id="stat-docs" class="font-semibold text-gray-900">0</span> <span class="hidden sm:inline">docs</span></span>
+          </div>
+          <div class="flex items-center gap-1 sm:gap-2">
+            <span class="w-2 h-2 bg-purple-500 rounded-full"></span>
+            <span class="text-gray-600"><span id="stat-chunks" class="font-semibold text-gray-900">0</span> <span class="hidden sm:inline">chunks</span></span>
+          </div>
+          <div class="flex items-center gap-1 sm:gap-2">
+            <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+            <span class="text-gray-600"><span id="stat-vectors" class="font-semibold text-gray-900">0</span> <span class="hidden sm:inline">vectors</span></span>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="w-2 h-2 bg-purple-500 rounded-full"></span>
-          <span class="text-gray-600"><span id="stat-chunks" class="font-semibold text-gray-900">0</span> chunks</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-          <span class="text-gray-600"><span id="stat-vectors" class="font-semibold text-gray-900">0</span> vectors</span>
+        
+        <div class="flex items-center gap-1 sm:gap-2">
+          <button id="library-btn" class="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Bibliothèque">
+            <svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+            </svg>
+          </button>
+          <button id="settings-btn" class="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Paramètres">
+            <svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -113,7 +121,7 @@ function createMainUI(container) {
   // Container principal
   const mainContainer = document.createElement('div');
   mainContainer.id = 'main-container';
-  mainContainer.className = 'flex-1 flex gap-4 p-4 min-h-0 overflow-hidden';
+  mainContainer.className = 'flex-1 flex flex-col sm:flex-row gap-2 sm:gap-4 p-2 sm:p-4 min-h-0 overflow-hidden';
   
   container.appendChild(header);
   container.appendChild(mainContainer);
@@ -150,11 +158,11 @@ function createMainUI(container) {
 function createDocumentsView(container) {
   const view = document.createElement('div');
   view.id = 'documents-view';
-  view.className = 'flex-1 flex gap-4 min-h-0';
+  view.className = 'flex-1 flex flex-col sm:flex-row gap-2 sm:gap-4 min-h-0';
   
   // Colonne gauche : Upload + Liste
   const leftColumn = document.createElement('div');
-  leftColumn.className = 'w-1/2 flex flex-col gap-3 min-h-0';
+  leftColumn.className = 'w-full sm:w-1/2 flex flex-col gap-2 sm:gap-3 min-h-0';
   
   // Section Upload (dropzone lance automatiquement Quick Upload)
   const uploadSection = document.createElement('div');
@@ -188,7 +196,7 @@ function createDocumentsView(container) {
   
   // Colonne droite : Ingestion Panel
   const rightColumn = document.createElement('div');
-  rightColumn.className = 'w-1/2 flex flex-col min-h-0';
+  rightColumn.className = 'w-full sm:w-1/2 flex flex-col min-h-0';
   rightColumn.appendChild(createIngestionPanel());
   
   view.appendChild(leftColumn);
@@ -202,16 +210,16 @@ function createDocumentsView(container) {
 function createChatView(container) {
   const view = document.createElement('div');
   view.id = 'chat-view';
-  view.className = 'flex-1 flex gap-4 min-h-0 hidden';
+  view.className = 'flex-1 flex flex-col sm:flex-row gap-2 sm:gap-4 min-h-0 hidden';
   
   // Colonne gauche : Chat (agents intégrés directement)
   const leftColumn = document.createElement('div');
-  leftColumn.className = 'flex-1 flex flex-col min-h-0';
+  leftColumn.className = 'flex-1 flex flex-col min-h-0 order-2 sm:order-1';
   leftColumn.appendChild(createChatPanel());
   
   // Colonne droite : System Controls
   const rightColumn = document.createElement('div');
-  rightColumn.className = 'w-80 flex-shrink-0 flex flex-col gap-3 min-h-0 overflow-y-auto';
+  rightColumn.className = 'w-full sm:w-80 flex-shrink-0 flex flex-col gap-2 sm:gap-3 min-h-0 overflow-y-auto order-1 sm:order-2';
   rightColumn.appendChild(createSystemControls());
   
   // RAG Status compact
@@ -250,16 +258,16 @@ function createChatView(container) {
 function createHandsFreeView(container) {
   const view = document.createElement('div');
   view.id = 'handsfree-view';
-  view.className = 'flex-1 flex gap-4 min-h-0 hidden';
+  view.className = 'flex-1 flex flex-col sm:flex-row gap-2 sm:gap-4 min-h-0 hidden';
   
   // Colonne principale : Hands-Free Panel
   const mainColumn = document.createElement('div');
-  mainColumn.className = 'flex-1 flex flex-col min-h-0 max-w-6xl mx-auto w-full px-4';
+  mainColumn.className = 'flex-1 flex flex-col min-h-0 max-w-6xl mx-auto w-full px-2 sm:px-4 order-2 sm:order-1';
   mainColumn.appendChild(createHandsFreePanel());
   
   // Colonne droite : System Controls + RAG Status
   const rightColumn = document.createElement('div');
-  rightColumn.className = 'w-80 flex-shrink-0 flex flex-col gap-3 min-h-0 overflow-y-auto';
+  rightColumn.className = 'w-full sm:w-80 flex-shrink-0 flex flex-col gap-2 sm:gap-3 min-h-0 overflow-y-auto order-1 sm:order-2';
   rightColumn.appendChild(createSystemControls());
   
   // RAG Status compact

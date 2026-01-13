@@ -14,16 +14,16 @@ export function createDropzone() {
   
   container.innerHTML = `
     <div id="dropzone" 
-         class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer transition-all hover:border-blue-400 hover:bg-blue-50">
+         class="border-2 border-dashed border-gray-300 rounded-xl p-4 sm:p-8 text-center cursor-pointer transition-all hover:border-blue-400 hover:bg-blue-50">
       <div class="flex flex-col items-center justify-center">
-        <svg class="w-10 h-10 text-blue-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-8 h-8 sm:w-10 sm:h-10 text-blue-500 mb-2 sm:mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" 
             d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
         </svg>
-        <p class="text-base font-semibold text-gray-700">Drop PDFs here</p>
-        <p class="text-sm text-gray-500 mt-1">or click to browse</p>
+        <p class="text-sm sm:text-base font-semibold text-gray-700">Drop PDFs here</p>
+        <p class="text-xs sm:text-sm text-gray-500 mt-1">or click to browse</p>
       </div>
-      <div id="dropzone-error" class="mt-4 text-red-600 text-sm font-medium hidden"></div>
+      <div id="dropzone-error" class="mt-2 sm:mt-4 text-red-600 text-xs sm:text-sm font-medium hidden"></div>
     </div>
   `;
   

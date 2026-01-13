@@ -20,18 +20,18 @@ export function createIngestionPanel() {
   const header = document.createElement('div');
   header.className = 'border-b border-gray-100 px-4 py-3 flex-shrink-0';
   header.innerHTML = `
-    <div class="flex items-center justify-between mb-3">
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 mb-3">
       <h2 class="text-sm font-bold text-gray-900">Vector Store</h2>
-      <div class="flex items-center gap-2">
-        <label class="px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded-lg hover:bg-blue-200 transition-colors cursor-pointer">
+      <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+        <label class="px-2 sm:px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded-lg hover:bg-blue-200 transition-colors cursor-pointer">
           Import
           <input type="file" id="import-db-input" accept=".json" 
                  style="position:absolute;left:-9999px;width:1px;height:1px;" />
         </label>
-        <button id="export-db-btn" class="px-2.5 py-1 text-xs font-medium text-green-700 bg-green-100 rounded-lg hover:bg-green-200 transition-colors">
+        <button id="export-db-btn" class="px-2 sm:px-2.5 py-1 text-xs font-medium text-green-700 bg-green-100 rounded-lg hover:bg-green-200 transition-colors">
           Export
         </button>
-        <span id="webgpu-badge" class="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 text-gray-500">
+        <span id="webgpu-badge" class="px-2 sm:px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 text-gray-500">
           ...
         </span>
       </div>
@@ -40,20 +40,20 @@ export function createIngestionPanel() {
       <span>Imported database active</span>
       <button id="clear-imported-btn" class="text-blue-900 font-medium hover:underline">Clear</button>
     </div>
-    <div class="flex gap-1 flex-wrap">
-      <button data-tab="chunks" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-600 text-white">
+    <div class="flex gap-1 flex-wrap overflow-x-auto pb-1 sm:pb-0">
+      <button data-tab="chunks" class="tab-btn px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium rounded-lg bg-purple-600 text-white whitespace-nowrap">
         Chunks
       </button>
-      <button data-tab="vectors" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+      <button data-tab="vectors" class="tab-btn px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100 whitespace-nowrap">
         Vectors
       </button>
-      <button data-tab="stats" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+      <button data-tab="stats" class="tab-btn px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100 whitespace-nowrap">
         Stats
       </button>
-      <button data-tab="debug" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+      <button data-tab="debug" class="tab-btn px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100 whitespace-nowrap">
         Debug
       </button>
-      <button data-tab="search" class="tab-btn px-3 py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100">
+      <button data-tab="search" class="tab-btn px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium rounded-lg text-gray-600 hover:bg-gray-100 whitespace-nowrap">
         Search
       </button>
     </div>
